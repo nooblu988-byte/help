@@ -11,7 +11,7 @@ const client = new Client({
 });
 
 // Use environment variables for Render (safer than hardcoding)
-const YOUR_USER_ID = process.env.USER_ID || '1279005313688801384';
+const YOUR_USER_ID = process.env.USER_ID || 'YOUR_USER_ID_HERE';
 const TOKEN = process.env.BOT_TOKEN || 'YOUR_BOT_TOKEN_HERE';
 let tagResponse = process.env.TAG_RESPONSE || 'Hello! Main yahan hoon, kya kaam hai?';
 let tagReaction = process.env.TAG_REACTION || '👋';
