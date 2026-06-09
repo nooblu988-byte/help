@@ -30,8 +30,8 @@ const AI_ENABLED = GROQ_API_KEY && GROQ_API_KEY !== 'YOUR_GROQ_API_KEY_HERE' && 
 
 // ==================== ABUSE TRACKER (SMART SYSTEM) ====================
 
-const abuseTracker = new Map();      // { userId: { count, lastAbuse, ignoredUntil, warned } }
-const smartReplyCooldown = new Map();  // { userId: lastReplyTime }
+const abuseTracker = new Map();
+const smartReplyCooldown = new Map();
 
 const abuseWords = [
     'bc', 'bhenchod', 'behenchod', 'bhosdi', 'bhosdike', 'bhosdiwala', 'bhosdiwali',
@@ -436,20 +436,17 @@ async function handleAbuse(message) {
     const userId = message.author.id;
     const now = Date.now();
 
-    // 1. Check if user is currently ignored (30 min)
     if (isIgnored(userId)) {
-        return true; // Silently ignore - no reply at all
+        return true;
     }
 
-    // 2. Track abuse count
     let data = abuseTracker.get(userId) || { count: 0, lastAbuse: 0, warned: false };
     data.count++;
     data.lastAbuse = now;
 
-    // 3. If 3+ abuses in 10 min → ignore for 30 min, send one final warning
-    const recentAbuse = data.count; // simplified
+    const recentAbuse = data.count;
     if (recentAbuse >= 3) {
-        data.ignoredUntil = now + (30 * 60 * 1000); // 30 minutes
+        data.ignoredUntil = now + (30 * 60 * 1000);
         abuseTracker.set(userId, data);
         await message.reply("⏳ **Bas bhai bas!** 30 minute ke liye mute ho tum. Thoda socho, phir baat karo. 🧘‍♀️🤐");
         return true;
@@ -457,20 +454,17 @@ async function handleAbuse(message) {
 
     abuseTracker.set(userId, data);
 
-    // 4. Check smart reply cooldown (5 min per user)
     const lastReply = smartReplyCooldown.get(userId);
     if (lastReply && (now - lastReply) < (5 * 60 * 1000)) {
-        return true; // Already replied recently, stay silent
+        return true;
     }
 
-    // 5. Get smart witty reply from Groq AI
     const reply = await getGroqSmartReply(message.content, message.author.username);
 
     if (reply) {
         smartReplyCooldown.set(userId, now);
         await message.reply(reply);
     } else {
-        // Fallback smart replies (no repetition)
         const fallbacks = [
             "Arre bhai, itna gussa? Thanda paani piyo aur pyaar se baat karo 😌💙",
             "Yeh kya language hai? Shakespeare bhi sharma jaye! Thoda decency bhi add kar lo 🎭✨",
@@ -488,7 +482,6 @@ async function handleAbuse(message) {
     return true;
 }
 
-// Cleanup old entries every 30 min
 setInterval(() => {
     const now = Date.now();
     for (const [userId, data] of abuseTracker.entries()) {
@@ -888,79 +881,78 @@ async function getAIResponse(userId, userMessage) {
 
 let morningJob = null;
 
+async function sendGoodMorning(channelId) {
+    try {
+        const channel = await client.channels.fetch(channelId).catch(() => null);
+        if (!channel) {
+            console.log('❌ Good Morning: Channel not found!');
+            return false;
+        }
+
+        const owner = await client.users.fetch(YOUR_USER_ID).catch(() => null);
+        const ownerMention = owner ? `<@${YOUR_USER_ID}>` : 'Susmita mam';
+
+        // Message 1: Good Morning with Embed
+        const morningEmbed = new EmbedBuilder()
+            .setColor('#FFD700')
+            .setTitle('🌅 Good Morning!')
+            .setDescription(
+                `Hello ${ownerMention} mam uth jaiyeen good morning! 🌸\n\n` +
+                `Mei pray karti hu aj ka din apka bhot acha Jaye 🙏✨\n\n` +
+                `Have a wonderful day ahead! 💖🌈`
+            )
+            .setFooter({ text: 'With lots of love 💕', iconURL: client.user.displayAvatarURL() })
+            .setTimestamp();
+
+        await channel.send({ embeds: [morningEmbed] });
+
+        // Small delay before second message
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        // Message 2: Breakfast reminder with Embed
+        const breakfastEmbed = new EmbedBuilder()
+            .setColor('#FF8C00')
+            .setTitle('🍳 Breakfast Reminder')
+            .setDescription(
+                `${ownerMention} breakfast time se karlena ☕🥐\n\n` +
+                `Health is wealth! 💪🌟\n` +
+                `Aapka favourite breakfast kya hai? 🥞🍵`
+            )
+            .setFooter({ text: 'Take care of yourself! 🥰', iconURL: client.user.displayAvatarURL() })
+            .setTimestamp();
+
+        await channel.send({ embeds: [breakfastEmbed] });
+
+        console.log(`✅ Good morning sent to ${channel.name} at ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+        return true;
+
+    } catch (error) {
+        console.error('❌ Good Morning error:', error.message);
+        return false;
+    }
+}
+
 function initGoodMorningScheduler() {
     // Cancel existing job if any
     if (morningJob) {
         morningJob.stop();
+        console.log('🛑 Previous morning job stopped');
     }
 
-    // Schedule: 7:30 AM IST (2:00 AM UTC) — every day
+    // Schedule: 7:30 AM IST — every day
     morningJob = cron.schedule('0 30 7 * * *', async () => {
         if (!goodMorningChannelId) {
             console.log('❌ Good Morning: No channel set! Use ;setchannel <channel_id>');
             return;
         }
-
-        try {
-            const channel = await client.channels.fetch(goodMorningChannelId).catch(() => null);
-            if (!channel) {
-                console.log('❌ Good Morning: Channel not found!');
-                return;
-            }
-
-            const owner = await client.users.fetch(YOUR_USER_ID).catch(() => null);
-            const ownerMention = owner ? `<@${YOUR_USER_ID}>` : 'Susmita mam';
-
-            // Message 1: Good Morning with Embed
-            const morningEmbed = new EmbedBuilder()
-                .setColor('#FFD700')
-                .setTitle('🌅 Good Morning!')
-                .setDescription(
-                    `Hello ${ownerMention} mam uth jaiyeen good morning! 🌸
-
-` +
-                    `Mei pray karti hu aj ka din apka bhot acha Jaye 🙏✨
-
-` +
-                    `Have a wonderful day ahead! 💖🌈`
-                )
-                .setThumbnail('https://cdn.discordapp.com/attachments/placeholder/sunrise.png')
-                .setFooter({ text: 'With lots of love 💕', iconURL: client.user.displayAvatarURL() })
-                .setTimestamp();
-
-            await channel.send({ embeds: [morningEmbed] });
-
-            // Small delay before second message
-            await new Promise(resolve => setTimeout(resolve, 2000));
-
-            // Message 2: Breakfast reminder with Embed
-            const breakfastEmbed = new EmbedBuilder()
-                .setColor('#FF8C00')
-                .setTitle('🍳 Breakfast Reminder')
-                .setDescription(
-                    `${ownerMention} breakfast time se karlena ☕🥐
-
-` +
-                    `Health is wealth! 💪🌟
-` +
-                    `Aapka favourite breakfast kya hai? 🥞🍵`
-                )
-                .setFooter({ text: 'Take care of yourself! 🥰', iconURL: client.user.displayAvatarURL() })
-                .setTimestamp();
-
-            await channel.send({ embeds: [breakfastEmbed] });
-
-            console.log(`✅ Good morning sent to ${channel.name} at ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
-
-        } catch (error) {
-            console.error('❌ Good Morning error:', error.message);
-        }
+        await sendGoodMorning(goodMorningChannelId);
     }, {
         scheduled: true,
         timezone: 'Asia/Kolkata'
     });
 
     console.log('✅ Good Morning scheduler initialized for 7:30 AM IST');
+    console.log('📍 Channel:', goodMorningChannelId || 'NOT SET');
 }
 
 // ==================== BOT EVENTS ====================
@@ -991,13 +983,8 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     // === ABUSE DETECTION (NEW SMART SYSTEM) ===
-    // Check abuse first for ALL messages (not just owner tags)
     const wasAbuse = await handleAbuse(message);
-    if (wasAbuse) return; // Stop processing if abuse was handled
-
-    // === OWNER TAG DETECTION (OLD SYSTEM - Timeout/Warning) ===
-    // Only for owner tags with abuse (already handled above, but keeping for safety)
-    // The new system handles all abuse, so this section is now covered by handleAbuse()
+    if (wasAbuse) return;
 
     // If someone tags you (normal - no abuse)
     if (userMentionPattern.test(message.content)) {
@@ -1152,7 +1139,7 @@ client.on(Events.MessageCreate, async (message) => {
         return message.reply('User ID ' + newId + ' set karni hai? Bot restart karo config update karke. Current ID: ' + YOUR_USER_ID);
     }
 
-    // === NEW: SET GOOD MORNING CHANNEL ===
+    // === SET GOOD MORNING CHANNEL ===
     if (command === 'setchannel') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.reply('❌ Yeh command sirf admin use kar sakta hai!');
@@ -1161,21 +1148,17 @@ client.on(Events.MessageCreate, async (message) => {
         if (!channelId) {
             return message.reply('❌ Channel ID do! Example: `;setchannel 123456789012345678`\n\nYa #channel mention karo: `;setchannel <#channel_id>`');
         }
-        // Clean up mention format if needed
         let cleanId = channelId.replace(/[<#>]/g, '');
         if (!/^\d{17,19}$/.test(cleanId)) {
             return message.reply('❌ Valid channel ID do! 17-19 digits wali.');
         }
 
-        // Verify channel exists
         const channel = await client.channels.fetch(cleanId).catch(() => null);
         if (!channel) {
             return message.reply('❌ Channel nahi mila! ID check karo ya bot ko channel access do.');
         }
 
         goodMorningChannelId = cleanId;
-
-        // Re-init scheduler with new channel
         initGoodMorningScheduler();
 
         const embed = new EmbedBuilder()
@@ -1191,6 +1174,25 @@ client.on(Events.MessageCreate, async (message) => {
             .setTimestamp();
 
         return message.reply({ embeds: [embed] });
+    }
+
+    // === TEST GOOD MORNING (INSTANT) ===
+    if (command === 'testmorning') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            return message.reply('❌ Yeh command sirf admin use kar sakta hai!');
+        }
+        if (!goodMorningChannelId) {
+            return message.reply('❌ Pehle channel set karo! `;setchannel <channel_id>`');
+        }
+
+        await message.reply('🌅 Good morning test message bhej rahi hoon...');
+        const success = await sendGoodMorning(goodMorningChannelId);
+
+        if (success) {
+            return message.reply('✅ Test message successfully bhej diya!');
+        } else {
+            return message.reply('❌ Test failed! Channel ID check karo.');
+        }
     }
 
     if (command === 'status') {
@@ -1225,6 +1227,7 @@ client.on(Events.MessageCreate, async (message) => {
                 { name: ';setautoreply <text>', value: '20 sec auto-reply text set karo (Admin only)', inline: false },
                 { name: ';setid <user_id>', value: 'Monitored user ID set karo (Admin only)', inline: false },
                 { name: ';setchannel <channel_id>', value: 'Good morning channel set karo (Admin only) 🌅', inline: false },
+                { name: ';testmorning', value: 'Instant good morning test bhejo (Admin only) 🧪', inline: false },
                 { name: ';status', value: 'Current bot settings dekho', inline: false },
                 { name: ';help', value: 'Yeh help message', inline: false },
                 { name: 'AI Chat', value: AI_ENABLED ? '✅ AI Mode (Groq) + Smart Fallback' : '❌ Smart Mode Only', inline: false },
