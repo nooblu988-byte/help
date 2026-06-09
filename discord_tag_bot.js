@@ -15,49 +15,6 @@ const client = new Client({
 const YOUR_USER_ID = process.env.USER_ID || '123456789012345678';
 const TOKEN = process.env.BOT_TOKEN || 'YOUR_BOT_TOKEN_HERE';
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
-// Multiple Groq API Keys for rotation
-const GROQ_KEYS = [
-    process.env.GROQ_API_KEY_1 || '',
-    process.env.GROQ_API_KEY_2 || '',
-    process.env.GROQ_API_KEY_3 || '',
-    process.env.GROQ_API_KEY_4 || ''
-].filter(k => k && k.length > 10);
-
-let currentKeyIndex = 0;
-let keyFailCount = new Map(); // Track failures per key
-
-function getNextKey() {
-    if (GROQ_KEYS.length === 0) return null;
-
-    // Find working key with least failures
-    let bestKey = GROQ_KEYS[0];
-    let minFails = keyFailCount.get(bestKey) || 0;
-
-    for (const key of GROQ_KEYS) {
-        const fails = keyFailCount.get(key) || 0;
-        if (fails < minFails) {
-            minFails = fails;
-            bestKey = key;
-        }
-    }
-
-    return bestKey;
-}
-
-function markKeyFailed(key) {
-    const current = keyFailCount.get(key) || 0;
-    keyFailCount.set(key, current + 1);
-    console.log(`Key failed ${current + 1} times, rotating...`);
-}
-
-function resetKeyFailures() {
-    keyFailCount.clear();
-    console.log('All key failures reset!');
-}
-
-// Reset failures every hour
-setInterval(resetKeyFailures, 3600000);
-
 let tagResponse = process.env.TAG_RESPONSE || 'Hello! Main yahan hoon, kya kaam hai?';
 let tagReaction = process.env.TAG_REACTION || '👋';
 let autoReplyText = process.env.AUTO_REPLY || 'Sorry, abhi busy hoon. Baad me baat karte hain!';
@@ -403,19 +360,10 @@ Your personality traits:
 
 Always respond as Riya - a real girl, not a bot. Never mention you are an AI or bot unless specifically asked.`;
 
-async function getAIResponse(userId, userMessage, username, displayName) {
+async function getAIResponse(userId, userMessage) {
     if (!AI_ENABLED) return null;
 
     try {
-        // Detect gender if not already known
-        if (!userGenders.has(userId)) {
-            const detectedGender = detectGender(username, displayName);
-            userGenders.set(userId, detectedGender);
-            console.log(`Gender detected for ${username}: ${detectedGender}`);
-        }
-        const gender = userGenders.get(userId);
-        const systemPrompt = getSystemPrompt(gender);
-
         if (!userConversations.has(userId)) {
             userConversations.set(userId, []);
         }
@@ -424,7 +372,7 @@ async function getAIResponse(userId, userMessage, username, displayName) {
         history.push({ role: 'user', content: userMessage });
 
         const messages = [
-            { role: 'system', content: systemPrompt },
+            { role: 'system', content: SYSTEM_PROMPT },
             ...history.slice(-10),
             { role: 'user', content: userMessage }
         ];
@@ -456,11 +404,6 @@ async function getAIResponse(userId, userMessage, username, displayName) {
         console.log('Error Code:', error.code);
         console.log('Full Error:', error.toString());
         console.log('==================================');
-
-        // Mark key as failed if rate limit or auth error
-        if (error.response?.status === 429 || error.response?.status === 401) {
-            markKeyFailed(currentKey);
-        }
         return null;
     }
 }
@@ -1076,19 +1019,16 @@ client.on(Events.MessageCreate, async (message) => {
 
         if (AI_ENABLED && userMessage.length > 0) {
             await message.channel.sendTyping();
-            const aiResponse = await getAIResponse(message.author.id, userMessage, message.author.username, message.author.displayName);
+            const aiResponse = await getAIResponse(message.author.id, userMessage);
             if (aiResponse) {
-                // Truncate if too long for Discord
-                    const truncatedResponse = aiResponse.length > 1900 ? aiResponse.substring(0, 1900) + '...' : aiResponse;
-                    await message.reply(truncatedResponse);
+                await message.reply(aiResponse);
                 return;
             }
         }
 
         // Fallback to smart replies
         const smartReply = getSmartReply(message.content, message.author.id);
-        const truncatedSmartReply = smartReply.length > 1900 ? smartReply.substring(0, 1900) + '...' : smartReply;
-                    await message.reply(truncatedSmartReply);
+        await message.reply(smartReply);
         return;
     }
 
@@ -1106,18 +1046,15 @@ client.on(Events.MessageCreate, async (message) => {
                 // Try AI first
                 if (AI_ENABLED) {
                     await message.channel.sendTyping();
-                    const aiResponse = await getAIResponse(message.author.id, message.content, message.author.username, message.author.displayName);
+                    const aiResponse = await getAIResponse(message.author.id, message.content);
                     if (aiResponse) {
-                        // Truncate if too long for Discord
-                    const truncatedResponse = aiResponse.length > 1900 ? aiResponse.substring(0, 1900) + '...' : aiResponse;
-                    await message.reply(truncatedResponse);
+                        await message.reply(aiResponse);
                         return;
                     }
                 }
 
                 const smartReply = getSmartReply(message.content, message.author.id);
-                const truncatedSmartReply = smartReply.length > 1900 ? smartReply.substring(0, 1900) + '...' : smartReply;
-                    await message.reply(truncatedSmartReply);
+                await message.reply(smartReply);
                 return;
             }
         } catch (err) {}
@@ -1139,18 +1076,15 @@ client.on(Events.MessageCreate, async (message) => {
         // Try AI first
         if (AI_ENABLED) {
             await message.channel.sendTyping();
-            const aiResponse = await getAIResponse(message.author.id, message.content, message.author.username, message.author.displayName);
+            const aiResponse = await getAIResponse(message.author.id, message.content);
             if (aiResponse) {
-                // Truncate if too long for Discord
-                    const truncatedResponse = aiResponse.length > 1900 ? aiResponse.substring(0, 1900) + '...' : aiResponse;
-                    await message.reply(truncatedResponse);
+                await message.reply(aiResponse);
                 return;
             }
         }
 
         const smartReply = getSmartReply(message.content, message.author.id);
-        const truncatedSmartReply = smartReply.length > 1900 ? smartReply.substring(0, 1900) + '...' : smartReply;
-                    await message.reply(truncatedSmartReply);
+        await message.reply(smartReply);
         return;
     }
 
