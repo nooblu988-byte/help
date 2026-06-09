@@ -1,13 +1,14 @@
 {
   "name": "discord-tag-bot",
   "version": "1.0.0",
-  "description": "Discord bot for auto-reply on tags",
+  "description": "Discord AI bot with Groq API",
   "main": "discord_tag_bot.js",
   "scripts": {
     "start": "node discord_tag_bot.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.1"
+    "discord.js": "^14.14.1",
+    "axios": "^1.6.0"
   },
   "engines": {
     "node": ">=18.0.0"
