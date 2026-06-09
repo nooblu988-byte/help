@@ -396,7 +396,14 @@ async function getAIResponse(userId, userMessage) {
         console.log('✅ AI Response:', aiReply.substring(0, 50) + '...');
         return aiReply;
     } catch (error) {
-        console.log('❌ AI Failed, using smart fallback:', error.response?.data?.error?.message || error.message);
+        console.log('======== AI ERROR DETAILS ========');
+        console.log('Status:', error.response?.status);
+        console.log('StatusText:', error.response?.statusText);
+        console.log('Error Data:', JSON.stringify(error.response?.data, null, 2));
+        console.log('Error Message:', error.message);
+        console.log('Error Code:', error.code);
+        console.log('Full Error:', error.toString());
+        console.log('==================================');
         return null;
     }
 }
