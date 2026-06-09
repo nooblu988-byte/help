@@ -1,5 +1,6 @@
-const { Client, GatewayIntentBits, Events, PermissionsBitField } = require('discord.js');
+const { Client, GatewayIntentBits, Events, PermissionsBitField, EmbedBuilder } = require('discord.js');
 const axios = require('axios');
+const cron = require('node-cron');
 
 const client = new Client({
     intents: [
@@ -18,14 +19,489 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 let tagResponse = process.env.TAG_RESPONSE || 'Hello! Main yahan hoon, kya kaam hai?';
 let tagReaction = process.env.TAG_REACTION || '👋';
 let autoReplyText = process.env.AUTO_REPLY || 'Sorry, abhi busy hoon. Baad me baat karte hain!';
+let goodMorningChannelId = process.env.GOOD_MORNING_CHANNEL || null;
 const PREFIX = ';';
 
 const activeTimers = new Map();
 const userConversations = new Map();
 const userMemory = new Map();
 
-// Check if AI is available
 const AI_ENABLED = GROQ_API_KEY && GROQ_API_KEY !== 'YOUR_GROQ_API_KEY_HERE' && GROQ_API_KEY.length > 10;
+
+// ==================== ABUSE TRACKER (SMART SYSTEM) ====================
+
+const abuseTracker = new Map();      // { userId: { count, lastAbuse, ignoredUntil, warned } }
+const smartReplyCooldown = new Map();  // { userId: lastReplyTime }
+
+const abuseWords = [
+    'bc', 'bhenchod', 'behenchod', 'bhosdi', 'bhosdike', 'bhosdiwala', 'bhosdiwali',
+    'chutiya', 'chutiye', 'chutiyapa', 'chut', 'chutiyapa',
+    'gandu', 'gand', 'gaand', 'gandfat', 'gandmasti',
+    'madarchod', 'madar', 'mc',
+    'lavde', 'lund', 'laude', 'land', 'lauda',
+    'randi', 'rand', 'randikhana',
+    'kutta', 'kutiya', 'kutte', 'kutti',
+    'suar', 'suwar', 'sala', 'saala', 'sali', 'saali',
+    'harami', 'haramkhor', 'haram',
+    'nalayak', 'nikamma', 'bewakoof', 'bewakuf',
+    'jhantu', 'jhant', 'lundfakir', 'chutmarike', 'gandmarike', 'bhosadpike',
+    'teri maa', 'teri behen', 'teri ma', 'teri bahin',
+    'maa chod', 'behen chod', 'ma chod',
+    'gaand mara', 'gand mara', 'chut mara',
+    'bsdk', 'bhsdk',
+    'fuddi', 'fuddu', 'phuddi', 'phuddu',
+    'tatte', 'tatti', 'tatty', 'tattiya',
+    'chod', 'chodu', 'chodna',
+    'bhen ke', 'behen ke', 'maa ke',
+    'fuck', 'fucking', 'fucker', 'fucked', 'fck', 'fk', 'fuq',
+    'shit', 'shitting', 'shitty', 'sh1t',
+    'bitch', 'bitching', 'b1tch', 'biatch',
+    'asshole', 'ass', 'arsehole', 'arse',
+    'bastard', 'bstrd', 'bastrd',
+    'damn', 'damm',
+    'crap', 'crappy',
+    'dick', 'd1ck', 'dik', 'dikk',
+    'pussy', 'puss', 'pssy', 'pusy',
+    'whore', 'wh0re', 'hore',
+    'slut', 'sl0t', 'slt',
+    'cunt', 'c0nt', 'cnt',
+    'nigga', 'nigger', 'n1gga', 'n1gger',
+    'retard', 'retarded', 'rtard',
+    'idiot', '1diot', 'id1ot',
+    'stupid', 'stup1d', 'stpd',
+    'loser', 'l0ser', 'looser',
+    'motherfucker', 'mtherfcker', 'mthrfckr',
+    'fatherfucker', 'fckr',
+    'cock', 'c0ck', 'cok',
+    'kill yourself', 'kys', 'kill urself',
+    'die', 'd1e', 'go die',
+    'shut up', 'shutup', 'stfu',
+    'get lost', 'getlost',
+    'screw you', 'screwyou',
+    'piss off', 'piss',
+    'bloody', 'bl00dy',
+    'suck', 'sck', 'suk',
+    'handjob', 'blowjob', 'hj', 'bj',
+    'cum', 'cvm', 'kum',
+    'dildo', 'd1ldo',
+    'prostitute', 'pr0stitute',
+    'pimp', 'p1mp',
+    'thot', 'th0t',
+    'simp', 's1mp',
+    'incel', '1ncel',
+    'cuck', 'c0ck',
+    'nerd', 'n3rd',
+    'geek', 'g33k',
+    'weirdo', 'w3irdo',
+    'creep', 'cr33p',
+    'stalker', 'st4lker',
+    'psycho', 'psych0',
+    'mental', 'm3ntal',
+    'crazy', 'cr4zy',
+    'insane', '1nsane',
+    'spastic', 'sp4stic',
+    'cripple', 'cr1pple',
+    'midget', 'm1dget',
+    'dwarf', 'dw4rf',
+    'fatty', 'f4tty',
+    'pig', 'p1g',
+    'cow', 'c0w',
+    'whale', 'wh4le',
+    'monkey', 'm0nkey',
+    'ape', '4pe',
+    'dog', 'd0g',
+    'cat', 'c4t',
+    'rat', 'r4t',
+    'snake', 'sn4ke',
+    'lizard', 'l1zard',
+    'worm', 'w0rm',
+    'parasite', 'par4site',
+    'leech', 'l3ech',
+    'vampire', 'v4mpire',
+    'zombie', 'z0mbie',
+    'ghost', 'gh0st',
+    'demon', 'd3mon',
+    'devil', 'd3vil',
+    'satan', 's4tan',
+    'evil', '3vil',
+    'wicked', 'w1cked',
+    'cruel', 'cr3ul',
+    'mean', 'm3an',
+    'rude', 'r1de',
+    'nasty', 'n4sty',
+    'gross', 'gr0ss',
+    'disgusting', 'd1sgusting',
+    'sick', 's1ck',
+    'vile', 'v1le',
+    'filthy', 'f1lthy',
+    'dirty', 'd1rty',
+    'rotten', 'r0tten',
+    'stinking', 'st1nking',
+    'smelly', 'sm3lly',
+    'foul', 'f0ul',
+    'putrid', 'putr1d',
+    'rancid', 'r4ncid',
+    'toxic', 't0xic',
+    'poison', 'p01son',
+    'venom', 'v3nom',
+    'acid', '4cid',
+    'burn', 'bvrn',
+    'destroy', 'd3stroy',
+    'kill', 'k1ll', 'kll',
+    'murder', 'mvrder',
+    'death', 'd3ath',
+    'dead', 'd3ad',
+    'die', 'd1e',
+    'suicide', 'svicide',
+    'hang', 'h4ng',
+    'shoot', 'sh00t',
+    'stab', 'st4b',
+    'cut', 'c1t',
+    'slice', 'sl1ce',
+    'dice', 'd1ce',
+    'chop', 'ch0p',
+    'hack', 'h4ck',
+    'slash', 'sl4sh',
+    'tear', 't3ar',
+    'rip', 'r1p',
+    'break', 'br3ak',
+    'crush', 'cr1sh',
+    'smash', 'sm4sh',
+    'wreck', 'wr3ck',
+    'ruin', 'r1in',
+    'damage', 'd4mage',
+    'hurt', 'h1rt',
+    'harm', 'h4rm',
+    'injure', '1njure',
+    'wound', 'w0und',
+    'pain', 'p41n',
+    'torture', 't0rture',
+    'torment', 't0rment',
+    'suffer', 's1ffer',
+    'agony', '4gony',
+    'misery', 'm1sery',
+    'distress', 'd1stress',
+    'anguish', '4nguish',
+    'despair', 'd3spair',
+    'depression', 'd3pression',
+    'anxiety', '4nxiety',
+    'stress', 'str3ss',
+    'panic', 'p4nic',
+    'fear', 'f3ar',
+    'terror', 't3rror',
+    'horror', 'h0rror',
+    'nightmare', 'n1ghtmare',
+    'hell', 'h3ll',
+    'damnation', 'd4mnation',
+    'curse', 'c1rse',
+    'hex', 'h3x',
+    'jinx', 'j1nx',
+    'spell', 'sp3ll',
+    'black magic', 'bl4ck magic',
+    'voodoo', 'v00d00',
+    'witch', 'w1tch',
+    'warlock', 'w4rlock',
+    'sorcerer', 's0rcerer',
+    'wizard', 'w1zard',
+    'imp', '1mp',
+    'fiend', 'f1end',
+    'monster', 'm0nster',
+    'beast', 'b3ast',
+    'creature', 'cr3ature',
+    'thing', 'th1ng',
+    'it', '1t',
+    'that', 'th4t',
+    'this', 'th1s',
+    'what', 'wh4t',
+    'whatever', 'wh4tever',
+    'whoever', 'wh0ever',
+    'whichever', 'wh1chever',
+    'wherever', 'wh3rever',
+    'whenever', 'wh3never',
+    'however', 'h0wever',
+    'forever', 'f0rever',
+    'never', 'n3ver',
+    'ever', '3ver',
+    'always', '4lways',
+    'sometimes', 's0metimes',
+    'maybe', 'm4ybe',
+    'perhaps', 'p3rhaps',
+    'probably', 'pr0bably',
+    'possibly', 'p0ssibly',
+    'likely', 'l1kely',
+    'unlikely', 'unl1kely',
+    'definitely', 'd3finitely',
+    'absolutely', '4bsolutely',
+    'certainly', 'c3rtainly',
+    'surely', 's1urely',
+    'really', 'r3ally',
+    'truly', 'tr1ly',
+    'actually', '4ctually',
+    'literally', 'l1terally',
+    'seriously', 's3riously',
+    'honestly', 'h0nestly',
+    'frankly', 'fr4nkly',
+    'basically', 'b4sically',
+    'essentially', '3ssentially',
+    'fundamentally', 'f1ndamentally',
+    'ultimately', '1ltimately',
+    'eventually', '3ventually',
+    'finally', 'f1nally',
+    'lastly', 'l1astly',
+    'overall', '0verall',
+    'generally', 'g3nerally',
+    'usually', 'u1sually',
+    'normally', 'n0rmally',
+    'typically', 't1pically',
+    'commonly', 'c0mmonly',
+    'frequently', 'fr3quently',
+    'often', '0ften',
+    'regularly', 'r3gularly',
+    'repeatedly', 'r3peatedly',
+    'constantly', 'c0nstantly',
+    'continuously', 'c0ntinuously',
+    'consistently', 'c0nsistently',
+    'persistently', 'p3rsistently',
+    'permanently', 'p3rmanently',
+    'temporarily', 't3mporarily',
+    'briefly', 'br1efly',
+    'shortly', 'sh0rtly',
+    'soon', 's00n',
+    'later', 'l4ter',
+    'afterwards', '4fterwards',
+    'meanwhile', 'm3anwhile',
+    'simultaneously', 's1multaneously',
+    'concurrently', 'c0ncurrently',
+    'previously', 'pr3viously',
+    'formerly', 'f0rmerly',
+    'originally', '0riginally',
+    'initially', '1nitially',
+    'primarily', 'pr1marily',
+    'mainly', 'm1inly',
+    'mostly', 'm0stly',
+    'largely', 'l1rgely',
+    'partly', 'p1rtly',
+    'partially', 'p4rtially',
+    'slightly', 'sl1ghtly',
+    'somewhat', 's0mewhat',
+    'rather', 'r4ther',
+    'quite', 'qu1te',
+    'fairly', 'f4irly',
+    'pretty', 'pr3tty',
+    'very', 'v3ry',
+    'extremely', '3xtremely',
+    'incredibly', '1ncredibly',
+    'unbelievably', 'unb3lievably',
+    'astonishingly', '4stonishingly',
+    'remarkably', 'r3markably',
+    'extraordinarily', '3xtraordinarily',
+    'exceptionally', '3xceptionally',
+    'especially', '3specially',
+    'particularly', 'p4rticularly',
+    'specifically', 'sp3cifically',
+    'explicitly', '3xplicitly',
+    'expressly', '3xpressly',
+    'deliberately', 'd3liberately',
+    'intentionally', '1ntentionally',
+    'calculatedly', 'c4lculatedly',
+    'coldly', 'c0ldly',
+    'callously', 'c4llously',
+    'heartlessly', 'h3artlessly',
+    'mercilessly', 'm3rcilessly',
+    'ruthlessly', 'r1thlessly',
+    'relentlessly', 'r3lentlessly',
+    'remorselessly', 'r3morselessly',
+    'shamelessly', 'sh4melessly',
+    'unashamedly', 'un4shamedly',
+    'brazenly', 'br4zenly',
+    'blatantly', 'bl4tantly',
+    'flagrantly', 'fl4grantly',
+    'egregiously', '3gregiously',
+    'outrageously', '0utrageously',
+    'heinously', 'h3inously',
+    'atrociously', '4trociously',
+    'viciously', 'v1ciously',
+    'savagely', 's4vagely',
+    'brutally', 'br1tally',
+    'cruelly', 'cr1elly',
+    'harshly', 'h4rshly',
+    'severely', 's3verely',
+    'sternly', 'st3rnly',
+    'strictly', 'str1ctly',
+    'rigorously', 'r1gorously',
+    'sharply', 'sh4rply',
+    'bitingly', 'b1tingly',
+    'cuttingly', 'c1ttingly',
+    'caustically', 'c4ustically',
+    'acidly', '4cidly',
+    'tartly', 't4rtly',
+    'bitterly', 'b1tterly',
+    'resentfully', 'r3sentfully',
+    'spitefully', 'sp1tefully',
+    'maliciously', 'm4liciously',
+    'malevolently', 'm4levolently',
+    'venomously', 'v3nomously',
+    'poisonously', 'p01sonously',
+    'toxicly', 't0xicly',
+    'nastily', 'n4stily',
+    'vilely', 'v1lely',
+    'foully', 'f0ully',
+    'filthily', 'f1lthily',
+    'dirtily', 'd1rtily',
+    'rottenly', 'r0ttenly',
+    'stinkingly', 'st1nkingly',
+    'smellily', 'sm3llily',
+    'putridly', 'putr1dly',
+    'rancidly', 'r4ncidly',
+    'toxically', 't0xically'
+];
+
+const leetMap = {
+    'a': '4', 'b': '8', 'c': '(', 'e': '3', 'g': '6', 'h': '#', 'i': '1', 'l': '|', 'o': '0', 's': '$', 't': '7', 'z': '2'
+};
+
+function normalizeText(text) {
+    let normalized = text.toLowerCase();
+    normalized = normalized.replace(/[.\-_\s]/g, '');
+    for (const [letter, leet] of Object.entries(leetMap)) {
+        normalized = normalized.split(leet).join(letter);
+    }
+    return normalized;
+}
+
+function hasAbuse(text) {
+    const normalized = normalizeText(text);
+    return abuseWords.some(word => {
+        const normalizedWord = normalizeText(word);
+        return normalized.includes(normalizedWord);
+    });
+}
+
+function isIgnored(userId) {
+    const data = abuseTracker.get(userId);
+    if (!data) return false;
+    if (data.ignoredUntil && Date.now() < data.ignoredUntil) return true;
+    return false;
+}
+
+async function getGroqSmartReply(messageContent, username) {
+    if (!AI_ENABLED) return null;
+    try {
+        const prompt = `A Discord user named "${username}" just sent an abusive or disrespectful message: "${messageContent}"
+
+Your job is to respond with a witty, humorous, and respectful reply in Hinglish (Hindi + English mix) that:
+1. Politely tells them to talk with respect
+2. Uses your sense of humour - be funny but classy
+3. Never repeats the same generic "pyaar se baat karo" line
+4. Makes them feel gently roasted but not offended
+5. Keep it under 2 sentences
+6. Add relevant emojis
+
+Examples:
+- "Arre bhai, itna gussa? Thanda paani piyo aur pyaar se baat karo 😌💙"
+- "Yeh kya language hai? Shakespeare bhi sharma jaye! Thoda decency bhi add kar lo 🎭✨"
+- "Aapki vocabulary bohot colourful hai, lekin thoda respect bhi sikh lo 🌈😇"
+- "Itna gussa? Thoda meditation karo yaar, peace milega 🧘‍♀️🕊️"
+- "Arre yaar, aise baat karoge toh dil toot jayega! Thoda pyaar se 💔💕"
+
+Now generate a UNIQUE, FRESH reply (different from examples):`;
+
+        const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+            model: 'llama-3.1-8b-instant',
+            messages: [
+                { role: 'system', content: 'You are a witty, humorous female AI assistant named Riya. You respond in Hinglish with emojis. Be funny but respectful.' },
+                { role: 'user', content: prompt }
+            ],
+            temperature: 0.95,
+            max_tokens: 150,
+            top_p: 1
+        }, {
+            headers: {
+                'Authorization': `Bearer ${GROQ_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 8000
+        });
+
+        return response.data.choices[0]?.message?.content?.trim() || null;
+    } catch (error) {
+        console.log('Groq smart reply error:', error.message);
+        return null;
+    }
+}
+
+async function handleAbuse(message) {
+    if (!hasAbuse(message.content)) return false;
+
+    const userId = message.author.id;
+    const now = Date.now();
+
+    // 1. Check if user is currently ignored (30 min)
+    if (isIgnored(userId)) {
+        return true; // Silently ignore - no reply at all
+    }
+
+    // 2. Track abuse count
+    let data = abuseTracker.get(userId) || { count: 0, lastAbuse: 0, warned: false };
+    data.count++;
+    data.lastAbuse = now;
+
+    // 3. If 3+ abuses in 10 min → ignore for 30 min, send one final warning
+    const recentAbuse = data.count; // simplified
+    if (recentAbuse >= 3) {
+        data.ignoredUntil = now + (30 * 60 * 1000); // 30 minutes
+        abuseTracker.set(userId, data);
+        await message.reply("⏳ **Bas bhai bas!** 30 minute ke liye mute ho tum. Thoda socho, phir baat karo. 🧘‍♀️🤐");
+        return true;
+    }
+
+    abuseTracker.set(userId, data);
+
+    // 4. Check smart reply cooldown (5 min per user)
+    const lastReply = smartReplyCooldown.get(userId);
+    if (lastReply && (now - lastReply) < (5 * 60 * 1000)) {
+        return true; // Already replied recently, stay silent
+    }
+
+    // 5. Get smart witty reply from Groq AI
+    const reply = await getGroqSmartReply(message.content, message.author.username);
+
+    if (reply) {
+        smartReplyCooldown.set(userId, now);
+        await message.reply(reply);
+    } else {
+        // Fallback smart replies (no repetition)
+        const fallbacks = [
+            "Arre bhai, itna gussa? Thanda paani piyo aur pyaar se baat karo 😌💙",
+            "Yeh kya language hai? Shakespeare bhi sharma jaye! Thoda decency bhi add kar lo 🎭✨",
+            "Aapki vocabulary bohot colourful hai, lekin thoda respect bhi sikh lo 🌈😇",
+            "Itna gussa? Thoda meditation karo yaar, peace milega 🧘‍♀️🕊️",
+            "Arre yaar, aise baat karoge toh dil toot jayega! Thoda pyaar se 💔💕",
+            "Bhai calm down! Anger management ka course join karo, main sponsor karungi 😎🤝",
+            "Aise gali galoch se kya hoga? Thoda pyaar failao, duniya sudhar jayegi 🌸💫"
+        ];
+        const randomFallback = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+        smartReplyCooldown.set(userId, now);
+        await message.reply(randomFallback);
+    }
+
+    return true;
+}
+
+// Cleanup old entries every 30 min
+setInterval(() => {
+    const now = Date.now();
+    for (const [userId, data] of abuseTracker.entries()) {
+        if (data.ignoredUntil && now > data.ignoredUntil + (60 * 60 * 1000)) {
+            abuseTracker.delete(userId);
+        }
+    }
+    for (const [userId, time] of smartReplyCooldown.entries()) {
+        if (now - time > (60 * 60 * 1000)) {
+            smartReplyCooldown.delete(userId);
+        }
+    }
+}, 30 * 60 * 1000);
 
 // ==================== SMART RESPONSE SYSTEM (FALLBACK) ====================
 
@@ -408,484 +884,83 @@ async function getAIResponse(userId, userMessage) {
     }
 }
 
-// ==================== ABUSE DETECTION ====================
+// ==================== GOOD MORNING SCHEDULER ====================
 
-const abuseWords = [
-    'bc', 'bhenchod', 'behenchod', 'bhosdi', 'bhosdike', 'bhosdiwala', 'bhosdiwali',
-    'chutiya', 'chutiye', 'chutiyapa', 'chut', 'chutiya', 'chutiyapa',
-    'gandu', 'gand', 'gaand', 'gandfat', 'gandmasti', 'gandu',
-    'madarchod', 'madar', 'mc',
-    'lavde', 'lund', 'laude', 'land', 'lauda',
-    'randi', 'rand', 'randikhana', 'randi',
-    'kutta', 'kutiya', 'kutte', 'kutti',
-    'suar', 'suwar', 'sala', 'saala', 'sali', 'saali',
-    'harami', 'haramkhor', 'haram',
-    'nalayak', 'nikamma', 'bewakoof', 'bewakuf', 'bewakoof',
-    'jhantu', 'jhant', 'jhantu',
-    'lundfakir', 'chutmarike', 'gandmarike', 'bhosadpike',
-    'teri maa', 'teri behen', 'teri ma', 'teri bahin',
-    'maa chod', 'behen chod', 'ma chod',
-    'gaand mara', 'gand mara', 'chut mara',
-    'bsdk', 'bhsdk', 'bhosdike',
-    'chutiya sala', 'gandu sala', 'madarchod sala',
-    'teri', 'maaki', 'behenki', 'bhosdi',
-    'fuddi', 'fuddu', 'phuddi', 'phuddu',
-    'tatte', 'tatti', 'tatty', 'tattiya',
-    'chod', 'chodu', 'chodna',
-    'gaand', 'gand', 'gaandu',
-    'lauda', 'lauda', 'land',
-    'bhen ke', 'behen ke', 'maa ke',
-    'chutiya', 'chutiyapa', 'chutiyapanti',
-    'gandu', 'gandfat', 'gandmasti',
-    'bhosdike', 'bhosdiwala', 'bhosdiwali',
-    'madarchod', 'behenchod', 'bhenchod',
-    'randi', 'rand', 'randikhana',
-    'kutta', 'kutiya', 'kutte',
-    'suar', 'harami', 'nalayak',
-    'bewakoof', 'jhantu', 'lundfakir',
-    'chutmarike', 'gandmarike',
-    'teri maa ki', 'teri behen ki',
-    'maa chod', 'behen chod',
-    'gaand mar', 'chut mar',
-    'bsdk', 'bhsdk',
-    'chutiya', 'gandu', 'madarchod',
-    'randi', 'kutta', 'suar',
-    'harami', 'nalayak', 'bewakoof',
-    'jhantu', 'lund', 'chut',
-    'gand', 'bhosdi', 'mc', 'bc',
-    'fuck', 'fucking', 'fucker', 'fucked', 'fck', 'fk', 'fuq',
-    'shit', 'shitting', 'shitty', 'sh1t',
-    'bitch', 'bitching', 'b1tch', 'biatch',
-    'asshole', 'ass', 'arsehole', 'arse',
-    'bastard', 'bstrd', 'bastrd',
-    'damn', 'damm',
-    'crap', 'crappy',
-    'dick', 'd1ck', 'dik', 'dikk',
-    'pussy', 'puss', 'pssy', 'pusy',
-    'whore', 'wh0re', 'hore',
-    'slut', 'sl0t', 'slt',
-    'cunt', 'c0nt', 'cnt',
-    'nigga', 'nigger', 'n1gga', 'n1gger',
-    'retard', 'retarded', 'rtard',
-    'idiot', '1diot', 'id1ot',
-    'stupid', 'stup1d', 'stpd',
-    'loser', 'l0ser', 'looser',
-    'ugly', 'ug1y',
-    'fat', 'f4t',
-    'worthless', 'worth1ess',
-    'useless', 'use1ess',
-    'trash', 'tr4sh',
-    'garbage', 'g4rbage',
-    'damn', 'd4mn',
-    'hell', 'h3ll',
-    'crap', 'cr4p',
-    'stupid', 'dumb', 'moron', 'imbecile',
-    'jerk', 'douche', 'douchebag',
-    'wanker', 'tosser', 'twat',
-    'prick', 'knob', 'tool',
-    'dipshit', 'dumbass', 'jackass',
-    'motherfucker', 'mtherfcker', 'mthrfckr',
-    'fatherfucker', 'fckr',
-    'cock', 'c0ck', 'cok',
-    'balls', 'b4lls',
-    'tits', 't1ts', 'titty',
-    'boobs', 'b00bs',
-    'penis', 'p3nis', 'pen1s',
-    'vagina', 'v4gina', 'vag1na',
-    'sex', 's3x', 'sexx',
-    'porn', 'p0rn', 'prn',
-    'rape', 'r4pe', 'rap3',
-    'kill yourself', 'kys', 'kill urself',
-    'die', 'd1e', 'go die',
-    'shut up', 'shutup', 'stfu',
-    'get lost', 'getlost',
-    'screw you', 'screwyou',
-    'piss off', 'piss',
-    'bloody', 'bl00dy',
-    'hell', 'he11',
-    'damn', 'd4mn',
-    'crap', 'cr4p',
-    'suck', 'sck', 'suk',
-    'blow', 'bl0w',
-    'job', 'j0b',
-    'handjob', 'blowjob', 'hj', 'bj',
-    'cum', 'cvm', 'kum',
-    'semen', 's3men',
-    'orgasm', '0rgasm',
-    'masturbate', 'mastrbate', 'masturb8',
-    'dildo', 'd1ldo',
-    'condom', 'c0ndom',
-    'viagra', 'v1agra',
-    'prostitute', 'pr0stitute',
-    'pimp', 'p1mp',
-    'slut', 'whore', 'skank',
-    'hoe', 'h0e',
-    'thot', 'th0t',
-    'simp', 's1mp',
-    'incel', '1ncel',
-    'cuck', 'c0ck',
-    'beta', 'b3ta',
-    'virgin', 'v1rgin',
-    'nerd', 'n3rd',
-    'geek', 'g33k',
-    'weirdo', 'w3irdo',
-    'creep', 'cr33p',
-    'stalker', 'st4lker',
-    'psycho', 'psych0',
-    'mental', 'm3ntal',
-    'crazy', 'cr4zy',
-    'insane', '1nsane',
-    'retard', 'rtard',
-    'spastic', 'sp4stic',
-    'cripple', 'cr1pple',
-    'midget', 'm1dget',
-    'dwarf', 'dw4rf',
-    'fatty', 'f4tty',
-    'pig', 'p1g',
-    'cow', 'c0w',
-    'whale', 'wh4le',
-    'elephant', 'el3phant',
-    'hippo', 'h1ppo',
-    'gorilla', 'g0rilla',
-    'monkey', 'm0nkey',
-    'ape', '4pe',
-    'dog', 'd0g',
-    'cat', 'c4t',
-    'rat', 'r4t',
-    'snake', 'sn4ke',
-    'lizard', 'l1zard',
-    'worm', 'w0rm',
-    'parasite', 'par4site',
-    'leech', 'l3ech',
-    'vampire', 'v4mpire',
-    'zombie', 'z0mbie',
-    'ghost', 'gh0st',
-    'demon', 'd3mon',
-    'devil', 'd3vil',
-    'satan', 's4tan',
-    'evil', '3vil',
-    'wicked', 'w1cked',
-    'cruel', 'cr3ul',
-    'mean', 'm3an',
-    'rude', 'r1de',
-    'nasty', 'n4sty',
-    'gross', 'gr0ss',
-    'disgusting', 'd1sgusting',
-    'sick', 's1ck',
-    'gross', 'gr0ss',
-    'vile', 'v1le',
-    'filthy', 'f1lthy',
-    'dirty', 'd1rty',
-    'rotten', 'r0tten',
-    'stinking', 'st1nking',
-    'smelly', 'sm3lly',
-    'foul', 'f0ul',
-    'putrid', 'putr1d',
-    'rancid', 'r4ncid',
-    'toxic', 't0xic',
-    'poison', 'p01son',
-    'venom', 'v3nom',
-    'acid', '4cid',
-    'burn', 'bvrn',
-    'destroy', 'd3stroy',
-    'kill', 'k1ll', 'kll',
-    'murder', 'mvrder',
-    'death', 'd3ath',
-    'dead', 'd3ad',
-    'die', 'd1e',
-    'suicide', 'svicide',
-    'hang', 'h4ng',
-    'shoot', 'sh00t',
-    'stab', 'st4b',
-    'cut', 'c1t',
-    'slice', 'sl1ce',
-    'dice', 'd1ce',
-    'chop', 'ch0p',
-    'hack', 'h4ck',
-    'slash', 'sl4sh',
-    'tear', 't3ar',
-    'rip', 'r1p',
-    'break', 'br3ak',
-    'crush', 'cr1sh',
-    'smash', 'sm4sh',
-    'wreck', 'wr3ck',
-    'ruin', 'r1in',
-    'damage', 'd4mage',
-    'hurt', 'h1rt',
-    'harm', 'h4rm',
-    'injure', '1njure',
-    'wound', 'w0und',
-    'pain', 'p41n',
-    'torture', 't0rture',
-    'torment', 't0rment',
-    'suffer', 's1ffer',
-    'agony', '4gony',
-    'misery', 'm1sery',
-    'distress', 'd1stress',
-    'anguish', '4nguish',
-    'despair', 'd3spair',
-    'depression', 'd3pression',
-    'anxiety', '4nxiety',
-    'stress', 'str3ss',
-    'panic', 'p4nic',
-    'fear', 'f3ar',
-    'terror', 't3rror',
-    'horror', 'h0rror',
-    'nightmare', 'n1ghtmare',
-    'hell', 'h3ll',
-    'damnation', 'd4mnation',
-    'curse', 'c1rse',
-    'hex', 'h3x',
-    'jinx', 'j1nx',
-    'spell', 'sp3ll',
-    'black magic', 'bl4ck magic',
-    'voodoo', 'v00d00',
-    'witch', 'w1tch',
-    'warlock', 'w4rlock',
-    'sorcerer', 's0rcerer',
-    'wizard', 'w1zard',
-    'demon', 'd3mon',
-    'devil', 'd3vil',
-    'imp', '1mp',
-    'fiend', 'f1end',
-    'monster', 'm0nster',
-    'beast', 'b3ast',
-    'creature', 'cr3ature',
-    'thing', 'th1ng',
-    'it', '1t',
-    'that', 'th4t',
-    'this', 'th1s',
-    'what', 'wh4t',
-    'whatever', 'wh4tever',
-    'whoever', 'wh0ever',
-    'whichever', 'wh1chever',
-    'wherever', 'wh3rever',
-    'whenever', 'wh3never',
-    'however', 'h0wever',
-    'forever', 'f0rever',
-    'never', 'n3ver',
-    'ever', '3ver',
-    'always', '4lways',
-    'sometimes', 's0metimes',
-    'maybe', 'm4ybe',
-    'perhaps', 'p3rhaps',
-    'probably', 'pr0bably',
-    'possibly', 'p0ssibly',
-    'likely', 'l1kely',
-    'unlikely', 'unl1kely',
-    'definitely', 'd3finitely',
-    'absolutely', '4bsolutely',
-    'certainly', 'c3rtainly',
-    'surely', 's1urely',
-    'really', 'r3ally',
-    'truly', 'tr1ly',
-    'actually', '4ctually',
-    'literally', 'l1terally',
-    'seriously', 's3riously',
-    'honestly', 'h0nestly',
-    'frankly', 'fr4nkly',
-    'basically', 'b4sically',
-    'essentially', '3ssentially',
-    'fundamentally', 'f1ndamentally',
-    'ultimately', '1ltimately',
-    'eventually', '3ventually',
-    'finally', 'f1nally',
-    'lastly', 'l1astly',
-    'overall', '0verall',
-    'generally', 'g3nerally',
-    'usually', 'u1sually',
-    'normally', 'n0rmally',
-    'typically', 't1pically',
-    'commonly', 'c0mmonly',
-    'frequently', 'fr3quently',
-    'often', '0ften',
-    'regularly', 'r3gularly',
-    'repeatedly', 'r3peatedly',
-    'constantly', 'c0nstantly',
-    'continuously', 'c0ntinuously',
-    'consistently', 'c0nsistently',
-    'persistently', 'p3rsistently',
-    'permanently', 'p3rmanently',
-    'temporarily', 't3mporarily',
-    'briefly', 'br1efly',
-    'shortly', 'sh0rtly',
-    'soon', 's00n',
-    'later', 'l4ter',
-    'afterwards', '4fterwards',
-    'meanwhile', 'm3anwhile',
-    'simultaneously', 's1multaneously',
-    'concurrently', 'c0ncurrently',
-    'previously', 'pr3viously',
-    'formerly', 'f0rmerly',
-    'originally', '0riginally',
-    'initially', '1nitially',
-    'primarily', 'pr1marily',
-    'mainly', 'm1inly',
-    'mostly', 'm0stly',
-    'largely', 'l1rgely',
-    'partly', 'p1rtly',
-    'partially', 'p4rtially',
-    'slightly', 'sl1ghtly',
-    'somewhat', 's0mewhat',
-    'rather', 'r4ther',
-    'quite', 'qu1te',
-    'fairly', 'f4irly',
-    'pretty', 'pr3tty',
-    'very', 'v3ry',
-    'extremely', '3xtremely',
-    'incredibly', '1ncredibly',
-    'unbelievably', 'unb3lievably',
-    'astonishingly', '4stonishingly',
-    'remarkably', 'r3markably',
-    'extraordinarily', '3xtraordinarily',
-    'exceptionally', '3xceptionally',
-    'especially', '3specially',
-    'particularly', 'p4rticularly',
-    'specifically', 'sp3cifically',
-    'explicitly', '3xplicitly',
-    'expressly', '3xpressly',
-    'deliberately', 'd3liberately',
-    'intentionally', '1ntentionally',
-    'calculatedly', 'c4lculatedly',
-    'coldly', 'c0ldly',
-    'callously', 'c4llously',
-    'heartlessly', 'h3artlessly',
-    'mercilessly', 'm3rcilessly',
-    'ruthlessly', 'r1thlessly',
-    'relentlessly', 'r3lentlessly',
-    'remorselessly', 'r3morselessly',
-    'shamelessly', 'sh4melessly',
-    'unashamedly', 'un4shamedly',
-    'brazenly', 'br4zenly',
-    'blatantly', 'bl4tantly',
-    'flagrantly', 'fl4grantly',
-    'egregiously', '3gregiously',
-    'outrageously', '0utrageously',
-    'heinously', 'h3inously',
-    'atrociously', '4trociously',
-    'viciously', 'v1ciously',
-    'savagely', 's4vagely',
-    'brutally', 'br1tally',
-    'cruelly', 'cr1elly',
-    'harshly', 'h4rshly',
-    'severely', 's3verely',
-    'sternly', 'st3rnly',
-    'strictly', 'str1ctly',
-    'rigorously', 'r1gorously',
-    'harshly', 'h4rshly',
-    'sharply', 'sh4rply',
-    'bitingly', 'b1tingly',
-    'cuttingly', 'c1ttingly',
-    'caustically', 'c4ustically',
-    'acidly', '4cidly',
-    'tartly', 't4rtly',
-    'bitterly', 'b1tterly',
-    'resentfully', 'r3sentfully',
-    'bitterly', 'b1tterly',
-    'spitefully', 'sp1tefully',
-    'maliciously', 'm4liciously',
-    'malevolently', 'm4levolently',
-    'venomously', 'v3nomously',
-    'poisonously', 'p01sonously',
-    'toxicly', 't0xicly',
-    'nastily', 'n4stily',
-    'vilely', 'v1lely',
-    'foully', 'f0ully',
-    'filthily', 'f1lthily',
-    'dirtily', 'd1rtily',
-    'rottenly', 'r0ttenly',
-    'stinkingly', 'st1nkingly',
-    'smellily', 'sm3llily',
-    'foully', 'f0ully',
-    'putridly', 'putr1dly',
-    'rancidly', 'r4ncidly',
-    'toxically', 't0xically'
-];
+let morningJob = null;
 
-const leetMap = {
-    'a': '4', 'b': '8', 'c': '(', 'e': '3', 'g': '6', 'h': '#', 'i': '1', 'l': '|', 'o': '0', 's': '$', 't': '7', 'z': '2'
-};
-
-function normalizeText(text) {
-    let normalized = text.toLowerCase();
-    normalized = normalized.replace(/[.\-_\s]/g, '');
-    for (const [letter, leet] of Object.entries(leetMap)) {
-        normalized = normalized.split(leet).join(letter);
+function initGoodMorningScheduler() {
+    // Cancel existing job if any
+    if (morningJob) {
+        morningJob.stop();
     }
-    return normalized;
-}
 
-function hasAbuse(text) {
-    const normalized = normalizeText(text);
-    return abuseWords.some(word => {
-        const normalizedWord = normalizeText(word);
-        return normalized.includes(normalizedWord);
+    // Schedule: 7:30 AM IST (2:00 AM UTC) — every day
+    morningJob = cron.schedule('0 30 7 * * *', async () => {
+        if (!goodMorningChannelId) {
+            console.log('❌ Good Morning: No channel set! Use ;setchannel <channel_id>');
+            return;
+        }
+
+        try {
+            const channel = await client.channels.fetch(goodMorningChannelId).catch(() => null);
+            if (!channel) {
+                console.log('❌ Good Morning: Channel not found!');
+                return;
+            }
+
+            const owner = await client.users.fetch(YOUR_USER_ID).catch(() => null);
+            const ownerMention = owner ? `<@${YOUR_USER_ID}>` : 'Susmita mam';
+
+            // Message 1: Good Morning with Embed
+            const morningEmbed = new EmbedBuilder()
+                .setColor('#FFD700')
+                .setTitle('🌅 Good Morning!')
+                .setDescription(
+                    `Hello ${ownerMention} mam uth jaiyeen good morning! 🌸
+
+` +
+                    `Mei pray karti hu aj ka din apka bhot acha Jaye 🙏✨
+
+` +
+                    `Have a wonderful day ahead! 💖🌈`
+                )
+                .setThumbnail('https://cdn.discordapp.com/attachments/placeholder/sunrise.png')
+                .setFooter({ text: 'With lots of love 💕', iconURL: client.user.displayAvatarURL() })
+                .setTimestamp();
+
+            await channel.send({ embeds: [morningEmbed] });
+
+            // Small delay before second message
+            await new Promise(resolve => setTimeout(resolve, 2000));
+
+            // Message 2: Breakfast reminder with Embed
+            const breakfastEmbed = new EmbedBuilder()
+                .setColor('#FF8C00')
+                .setTitle('🍳 Breakfast Reminder')
+                .setDescription(
+                    `${ownerMention} breakfast time se karlena ☕🥐
+
+` +
+                    `Health is wealth! 💪🌟
+` +
+                    `Aapka favourite breakfast kya hai? 🥞🍵`
+                )
+                .setFooter({ text: 'Take care of yourself! 🥰', iconURL: client.user.displayAvatarURL() })
+                .setTimestamp();
+
+            await channel.send({ embeds: [breakfastEmbed] });
+
+            console.log(`✅ Good morning sent to ${channel.name} at ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+
+        } catch (error) {
+            console.error('❌ Good Morning error:', error.message);
+        }
+    }, {
+        scheduled: true,
+        timezone: 'Asia/Kolkata'
     });
-}
 
-function isOwnerTaggedWithAbuse(message, userId) {
-    const content = message.content;
-    const hasOwnerMention = content.includes(`<@${userId}>`) || content.includes(`<@!${userId}>`);
-    return hasOwnerMention && hasAbuse(content);
-}
-
-const warnedUsers = new Map();
-const timeoutDuration = 600000;
-const spamThreshold = 3;
-const spamWindow = 60000;
-
-function isSpam(userId) {
-    const now = Date.now();
-    const userData = warnedUsers.get(userId);
-    if (!userData) return false;
-    const recentAbuse = userData.abuseHistory?.filter(time => now - time < spamWindow) || [];
-    return recentAbuse.length >= spamThreshold;
-}
-
-function recordAbuse(userId) {
-    if (!warnedUsers.has(userId)) {
-        warnedUsers.set(userId, { count: 0, abuseHistory: [] });
-    }
-    const data = warnedUsers.get(userId);
-    data.count++;
-    data.abuseHistory.push(Date.now());
-    warnedUsers.set(userId, data);
-    return data.count;
-}
-
-async function timeoutUser(member, duration, reason) {
-    try {
-        await member.timeout(duration, reason);
-        return true;
-    } catch (err) {
-        console.log('Timeout failed:', err.message);
-        return false;
-    }
-}
-
-function getWarningMessage(count, isSpam = false) {
-    if (isSpam) {
-        return `🚫 **SPAM DETECTED!** Bahut zyada gaaliya de rahi ho!
-
-⏰ **10 Minute Timeout!**
-📋 Reason: Owner ko abuse spam kiya
-💡 Next time respect se baat karna!`;
-    }
-    if (count === 1) {
-        return `⚠️ **Warning 1/2**
-
-🙅‍♀️ Owner ko aise mat bolo! Respect se baat karo.
-📋 Next time timeout milega!
-💕 Main toh tumhari friend hoon, dushman nahi!`;
-    } else {
-        return `🚫 **Warning 2/2 — FINAL!**
-
-⏰ **10 Minute Timeout!**
-📋 Reason: Owner ko abuse kiya
-💡 Next time respect se baat karna!
-
-🙏 Please be nice. Hum sab friends hain yahan!`;
-    }
+    console.log('✅ Good Morning scheduler initialized for 7:30 AM IST');
 }
 
 // ==================== BOT EVENTS ====================
@@ -894,9 +969,14 @@ client.once(Events.ClientReady, () => {
     console.log('Bot login ho gayi:', client.user.tag);
     console.log('Bot ID:', client.user.id);
     console.log('AI Mode:', AI_ENABLED ? '✅ ENABLED (Groq API)' : '❌ DISABLED (Smart Fallback)');
-    console.log('Abuse Protection: ✅ ENABLED');
+    console.log('Abuse Protection: ✅ SMART MODE (Groq Witty Replies + 30min Ignore)');
+    console.log('Good Morning: ✅ ENABLED (7:30 AM IST)');
+    console.log('Good Morning Channel:', goodMorningChannelId || 'NOT SET (use ;setchannel)');
     console.log('Prefix:', PREFIX);
     console.log('------');
+
+    // Initialize scheduler
+    initGoodMorningScheduler();
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -910,62 +990,16 @@ client.on(Events.MessageCreate, async (message) => {
         return;
     }
 
-    // ABUSE DETECTION
-    if (isOwnerTaggedWithAbuse(message, YOUR_USER_ID)) {
-        const abuseCount = recordAbuse(message.author.id);
-        const spam = isSpam(message.author.id);
+    // === ABUSE DETECTION (NEW SMART SYSTEM) ===
+    // Check abuse first for ALL messages (not just owner tags)
+    const wasAbuse = await handleAbuse(message);
+    if (wasAbuse) return; // Stop processing if abuse was handled
 
-        if (spam || abuseCount >= 2) {
-            const member = message.guild?.members.cache.get(message.author.id);
-            if (member) {
-                const timeoutSuccess = await timeoutUser(member, timeoutDuration, 
-                    `Owner ko abuse kiya - ${spam ? 'spam' : 'warning ' + abuseCount}`);
+    // === OWNER TAG DETECTION (OLD SYSTEM - Timeout/Warning) ===
+    // Only for owner tags with abuse (already handled above, but keeping for safety)
+    // The new system handles all abuse, so this section is now covered by handleAbuse()
 
-                if (timeoutSuccess) {
-                    await message.reply(getWarningMessage(abuseCount, true));
-                    await message.channel.send({
-                        embeds: [{
-                            color: 0xFF0000,
-                            title: '🚫 User Timed Out',
-                            description: `<@${message.author.id}> ko 10 minute ka timeout diya gaya hai!`,
-                            fields: [
-                                { name: '📋 Reason', value: 'Owner ko abuse kiya', inline: false },
-                                { name: '⏰ Duration', value: '10 minutes', inline: true },
-                                { name: '💡 Advice', value: 'Next time respect se baat karna!', inline: false }
-                            ],
-                            timestamp: new Date().toISOString(),
-                            footer: { text: 'Riya - Server Protection' }
-                        }]
-                    });
-
-                    try {
-                        await message.author.send({
-                            embeds: [{
-                                color: 0xFF6B6B,
-                                title: '⏰ Timeout Notice',
-                                description: `Aapko **${message.guild.name}** server mein 10 minute ka timeout diya gaya hai!`,
-                                fields: [
-                                    { name: '📋 Reason', value: 'Owner ko abuse kiya', inline: false },
-                                    { name: '💡 Kya Kare', value: 'Please respect se baat karo. Gaaliya dena allowed nahi hai!', inline: false },
-                                    { name: '⏰ Timeout Khatam', value: '10 minutes ke baad automatically remove ho jayega', inline: false }
-                                ],
-                                timestamp: new Date().toISOString(),
-                                footer: { text: 'Riya - Be Nice!' }
-                            }]
-                        });
-                    } catch (dmErr) {
-                        console.log('DM failed:', dmErr.message);
-                    }
-                }
-            }
-            return;
-        }
-
-        await message.reply(getWarningMessage(abuseCount));
-        return;
-    }
-
-    // If someone tags you (normal)
+    // If someone tags you (normal - no abuse)
     if (userMentionPattern.test(message.content)) {
         message.react(tagReaction).catch(err => console.log('Reaction error:', err));
 
@@ -1009,12 +1043,7 @@ client.on(Events.MessageCreate, async (message) => {
     // If someone mentions the bot directly
     if (message.mentions.has(client.user) && !message.content.includes(YOUR_USER_ID)) {
         const content = message.content.toLowerCase();
-        if (hasAbuse(content)) {
-            await message.reply('🙅‍♀️ Aise mat bolo na! Pyar se baat karo! 💕');
-            return;
-        }
 
-        // Try AI first, fallback to smart replies
         const userMessage = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
 
         if (AI_ENABLED && userMessage.length > 0) {
@@ -1026,7 +1055,6 @@ client.on(Events.MessageCreate, async (message) => {
             }
         }
 
-        // Fallback to smart replies
         const smartReply = getSmartReply(message.content, message.author.id);
         await message.reply(smartReply);
         return;
@@ -1038,12 +1066,7 @@ client.on(Events.MessageCreate, async (message) => {
             const refMsg = await message.channel.messages.fetch(message.reference.messageId);
             if (refMsg.author.id === client.user.id) {
                 const content = message.content.toLowerCase();
-                if (hasAbuse(content)) {
-                    await message.reply('🙅‍♀️ Aise mat bolo na! Pyar se baat karo! 💕');
-                    return;
-                }
 
-                // Try AI first
                 if (AI_ENABLED) {
                     await message.channel.sendTyping();
                     const aiResponse = await getAIResponse(message.author.id, message.content);
@@ -1068,12 +1091,6 @@ client.on(Events.MessageCreate, async (message) => {
         lowerContent.includes('bhabhi') ||
         lowerContent.includes('ladki')) {
 
-        if (hasAbuse(lowerContent)) {
-            await message.reply('🙅‍♀️ Aise mat bolo na! Pyar se baat karo! 💕');
-            return;
-        }
-
-        // Try AI first
         if (AI_ENABLED) {
             await message.channel.sendTyping();
             const aiResponse = await getAIResponse(message.author.id, message.content);
@@ -1135,6 +1152,47 @@ client.on(Events.MessageCreate, async (message) => {
         return message.reply('User ID ' + newId + ' set karni hai? Bot restart karo config update karke. Current ID: ' + YOUR_USER_ID);
     }
 
+    // === NEW: SET GOOD MORNING CHANNEL ===
+    if (command === 'setchannel') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            return message.reply('❌ Yeh command sirf admin use kar sakta hai!');
+        }
+        const channelId = args[0];
+        if (!channelId) {
+            return message.reply('❌ Channel ID do! Example: `;setchannel 123456789012345678`\n\nYa #channel mention karo: `;setchannel <#channel_id>`');
+        }
+        // Clean up mention format if needed
+        let cleanId = channelId.replace(/[<#>]/g, '');
+        if (!/^\d{17,19}$/.test(cleanId)) {
+            return message.reply('❌ Valid channel ID do! 17-19 digits wali.');
+        }
+
+        // Verify channel exists
+        const channel = await client.channels.fetch(cleanId).catch(() => null);
+        if (!channel) {
+            return message.reply('❌ Channel nahi mila! ID check karo ya bot ko channel access do.');
+        }
+
+        goodMorningChannelId = cleanId;
+
+        // Re-init scheduler with new channel
+        initGoodMorningScheduler();
+
+        const embed = new EmbedBuilder()
+            .setColor('#00FF00')
+            .setTitle('✅ Good Morning Channel Set!')
+            .setDescription(
+                `Good morning messages ab **${channel.name}** channel mein bheji jayengi! 🌅\n\n` +
+                `⏰ Time: **7:30 AM IST** daily\n` +
+                `👤 Owner: <@${YOUR_USER_ID}>\n\n` +
+                `Bot restart karne pe bhi yeh setting save rahegi (environment variable mein set karo)!`
+            )
+            .setFooter({ text: 'Riya - Daily Scheduler 💕' })
+            .setTimestamp();
+
+        return message.reply({ embeds: [embed] });
+    }
+
     if (command === 'status') {
         const embed = {
             color: 0x3498db,
@@ -1146,7 +1204,9 @@ client.on(Events.MessageCreate, async (message) => {
                 { name: 'Auto-Reply Text', value: autoReplyText, inline: true },
                 { name: 'Auto-Reply Timer', value: '20 seconds', inline: true },
                 { name: 'AI Mode', value: AI_ENABLED ? '✅ Active (Groq)' : '❌ Fallback (Smart)', inline: true },
-                { name: 'Abuse Protection', value: '✅ Active', inline: true },
+                { name: 'Abuse Protection', value: '✅ Smart Mode (Groq Witty + 30min Ignore)', inline: true },
+                { name: 'Good Morning', value: '✅ 7:30 AM IST Daily', inline: true },
+                { name: 'Good Morning Channel', value: goodMorningChannelId ? `<#${goodMorningChannelId}>` : '❌ Not Set (use ;setchannel)', inline: true },
                 { name: 'Prefix', value: PREFIX, inline: true }
             ],
             timestamp: new Date().toISOString()
@@ -1155,24 +1215,25 @@ client.on(Events.MessageCreate, async (message) => {
     }
 
     if (command === 'help') {
-        const embed = {
-            color: 0x2ecc71,
-            title: '🤖 Riya - Hybrid Bot Commands',
-            description: 'Prefix: **;**',
-            fields: [
+        const embed = new EmbedBuilder()
+            .setColor(0x2ecc71)
+            .setTitle('🤖 Riya - Hybrid Bot Commands')
+            .setDescription('Prefix: **;**')
+            .addFields(
                 { name: ';setresponse <text>', value: 'Tag response text set karo (Admin only)', inline: false },
                 { name: ';setreaction <emoji>', value: 'Reaction emoji set karo (Admin only)', inline: false },
                 { name: ';setautoreply <text>', value: '20 sec auto-reply text set karo (Admin only)', inline: false },
                 { name: ';setid <user_id>', value: 'Monitored user ID set karo (Admin only)', inline: false },
+                { name: ';setchannel <channel_id>', value: 'Good morning channel set karo (Admin only) 🌅', inline: false },
                 { name: ';status', value: 'Current bot settings dekho', inline: false },
                 { name: ';help', value: 'Yeh help message', inline: false },
                 { name: 'AI Chat', value: AI_ENABLED ? '✅ AI Mode (Groq) + Smart Fallback' : '❌ Smart Mode Only', inline: false },
-                { name: 'Abuse Protection', value: 'Owner ko abuse kiya? Warning → Timeout!', inline: false },
-                { name: 'Auto-Response', value: 'Jab koi <@' + YOUR_USER_ID + '> ko tag karega: instant ' + tagReaction + ' + reply + 20sec auto-reply', inline: false }
-            ],
-            footer: { text: 'Riya - Your Smart Friend 💕' },
-            timestamp: new Date().toISOString()
-        };
+                { name: 'Abuse Protection', value: '✅ Smart Mode: Groq witty replies + 30min ignore after 3 abuses', inline: false },
+                { name: 'Auto-Response', value: 'Jab koi <@' + YOUR_USER_ID + '> ko tag karega: instant ' + tagReaction + ' + reply + 20sec auto-reply', inline: false },
+                { name: 'Good Morning', value: '✅ Roz 7:30 AM IST pe owner ko tag karke good morning + breakfast reminder 🌅🍳', inline: false }
+            )
+            .setFooter({ text: 'Riya - Your Smart Friend 💕' })
+            .setTimestamp();
         return message.reply({ embeds: [embed] });
     }
 });
