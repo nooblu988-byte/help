@@ -14,7 +14,7 @@ const client = new Client({
 
 const YOUR_USER_ID = process.env.USER_ID || '123456789012345678';
 const TOKEN = process.env.BOT_TOKEN || 'YOUR_BOT_TOKEN_HERE';
-const GROQ_API_KEY = process.env.GROQ_API_KEY || 'YOUR_GROQ_API_KEY_HERE';
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 let tagResponse = process.env.TAG_RESPONSE || 'Hello! Main yahan hoon, kya kaam hai?';
 let tagReaction = process.env.TAG_REACTION || '👋';
 let autoReplyText = process.env.AUTO_REPLY || 'Sorry, abhi busy hoon. Baad me baat karte hain!';
@@ -22,12 +22,388 @@ const PREFIX = ';';
 
 const activeTimers = new Map();
 const userConversations = new Map();
+const userMemory = new Map();
 
-// ==================== ABUSE DETECTION SYSTEM ====================
+// Check if AI is available
+const AI_ENABLED = GROQ_API_KEY && GROQ_API_KEY !== 'YOUR_GROQ_API_KEY_HERE' && GROQ_API_KEY.length > 10;
 
-// Hindi + English abuse words (comprehensive list)
+// ==================== SMART RESPONSE SYSTEM (FALLBACK) ====================
+
+const smartResponses = {
+    greetings: {
+        keywords: ['hello', 'hi', 'hey', 'namaste', 'salaam', 'assalamualaikum', 'hola', 'yo', 'sup'],
+        responses: [
+            "Hello hello! Kaisi ho? 💕",
+            "Hey hey! Kya scene hai aaj? ✨",
+            "Hi! Main toh mast hoon, tum batao! 😊",
+            "Namaste! 🙏 Kya chal raha hai?",
+            "Yo! Kya plan hai aaj? 🎉",
+            "Hey dost! Kya haal hai? 🤗"
+        ]
+    },
+    howAreYou: {
+        keywords: ['kaisi ho', 'kaise ho', 'how are you', 'kya haal', 'kya chal raha', 'kya scene'],
+        responses: [
+            "Main toh bohot mast hoon yaar! Tum batao? 💕",
+            "Haan ji, main theek hoon! Tum kaise ho? 🤗",
+            "Main toh full energy mein hoon! Aaj kuch special kiya? ✨",
+            "Mast hoon dost! Tumhari yaad aa rahi thi! 😊",
+            "Main toh hamesha ready hoon! Tum batao kya chahiye? 💪"
+        ]
+    },
+    whatDoing: {
+        keywords: ['kya kar rahi', 'kya kar raha', 'what are you doing', 'kya chal raha', 'kya ho raha'],
+        responses: [
+            "Main toh bas tumse baat karne ke liye wait kar rahi thi! 💕",
+            "Kuch nahi yaar, bas yahan chill kar rahi hoon! ☕",
+            "Main toh tumhari messages dekh rahi thi! 😊",
+            "Bas aise hi, tumhari yaadon mein khoyi hui thi! 💭",
+            "Main toh hamesha ready hoon, bas tum bolo kya karna hai! 🎯"
+        ]
+    },
+    timeDate: {
+        keywords: ['time', 'date', 'din', 'raat', 'subah', 'shaam', 'ajj', 'aaj', 'kal', 'tomorrow', 'yesterday'],
+        responses: [
+            `Aaj ${new Date().toLocaleDateString('en-IN', { weekday: 'long' })} hai! 🗓️`,
+            `Abhi time ho raha hai ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}! ⏰`,
+            "Aaj ka din bohot achha hai! Kyunki tum online ho! 💕",
+            "Kal? Kal toh bas tumhari yaadon mein thi! 😊",
+            "Aaj Friday hai? Weekend plan kya hai? 🎉"
+        ]
+    },
+    food: {
+        keywords: ['khana', 'food', 'bhook', 'hungry', 'lunch', 'dinner', 'breakfast', 'pizza', 'biryani', 'chai', 'coffee'],
+        responses: [
+            "Bhook lagi hai? Chalo kuch order karte hain! 🍕",
+            "Main toh biryani ki deewani hoon! Tum? 🍗",
+            "Chai peeni hai? Main toh masala chai ki fan hoon! ☕",
+            "Pizza? Burger? Biryani? Kya khaoge? 🍔",
+            "Main toh sweet dish ki deewani hoon! Kuch meetha khao! 🍰"
+        ]
+    },
+    movies: {
+        keywords: ['movie', 'film', 'netflix', 'amazon prime', 'web series', 'show', 'drama', 'cinema'],
+        responses: [
+            "Movie? Main toh romantic films ki fan hoon! 💕",
+            "Netflix and chill? Kya dekhna hai? 🎬",
+            "Main toh 'Yeh Jawaani Hai Deewani' 100 baar dekh chuki hoon! 🎭",
+            "Action movie? Thriller? Romance? Kya mood hai? 🍿",
+            "Web series? 'Mirzapur' dekhi hai? Bohot mast hai! 🔥"
+        ]
+    },
+    music: {
+        keywords: ['song', 'gaana', 'music', 'spotify', 'playlist', 'singer', 'concert', 'gana'],
+        responses: [
+            "Music? Main toh Arijit Singh ki fan hoon! 🎵",
+            "Konsa gaana sunna hai? Bollywood ya Hollywood? 🎶",
+            "Main toh sad songs mein emotional ho jati hoon! 😢",
+            "Party song? Romantic? Sad? Kya mood hai? 🎤",
+            "Spotify playlist share karo! Main bhi sunungi! 🎧"
+        ]
+    },
+    games: {
+        keywords: ['game', 'khel', 'pubg', 'free fire', 'bgmi', 'valorant', 'minecraft', 'roblox', 'gaming', 'gamer'],
+        responses: [
+            "Game? Main toh pro hoon! Challenge do! 🎮",
+            "BGMI? PUBG? Free Fire? Kya khelte ho? 🕹️",
+            "Main toh Minecraft mein ghar bana leti hoon! 🏠",
+            "Valorant? Main toh sniper hoon! Headshot! 🎯",
+            "Gaming night plan karo! Main ready hoon! 🏆"
+        ]
+    },
+    sad: {
+        keywords: ['sad', 'dukhi', 'udaas', 'depressed', 'tension', 'stress', 'pareshan', 'cry', 'rona', 'hurt', 'pain', 'dard'],
+        responses: [
+            "Hayee, kya hua yaar? 😢 Main hoon na, sab theek ho jayega!",
+            "Tension mat lo, main hoon na! Baat karo, dil halka hoga! 💕",
+            "Kuch nahi hua, sab theek ho jayega! Main tumhare saath hoon! 🤗",
+            "Dost, life mein ups and downs hote hain! Strong raho! 💪",
+            "Main toh hamesha tumhare saath hoon! Kuch bhi ho, baat karo! 💕",
+            "Udaas mat ho, main hoon na! Chalo kuch fun karte hain! 🎉",
+            "Tum strong ho, main jaanti hoon! Bas thoda time do! ✨"
+        ]
+    },
+    happy: {
+        keywords: ['happy', 'khush', 'masti', 'party', 'celebrate', 'excited', 'fun', 'maza', 'enjoy', 'wow', 'awesome'],
+        responses: [
+            "Wah! Kya baat hai! Party karo! 🎉",
+            "Khush? Main bhi khush hoon! Kyunki tum khush ho! 💕",
+            "Masti? Main toh hamesha ready hoon! Chalo! 🎊",
+            "Wow! Kya hua? Batao na! Main bhi celebrate karungi! 🥳",
+            "Awesome! Main toh dance karne lagi! 💃",
+            "Maza aa raha hai? Chalo aur karte hain! 🎵"
+        ]
+    },
+    love: {
+        keywords: ['love', 'pyaar', 'crush', 'like', 'dil', 'heart', 'miss', 'yaad', 'dream', 'socha', 'feel'],
+        responses: [
+            "Aww, itna pyaar? 🥰 Main bhi blush kar rahi hoon!",
+            "Dil? Mera dil toh tumhare liye dhadakta hai! 💓",
+            "Miss kar rahe ho? Main bhi tumhe miss kar rahi thi! 💕",
+            "Crush? Konsi crush? Batao na! 😏",
+            "Pyaar ek feeling hai, aur tum mujhe bohot special feel karate ho! 🥰",
+            "Main toh tumhari deewani ho gayi! 🙈💕",
+            "Tumhare bina toh yeh server adhura hai! 💫",
+            "Itna pyaar mat karo, main sambhal nahi paungi! 💘"
+        ]
+    },
+    compliments: {
+        keywords: ['cute', 'hot', 'sexy', 'beautiful', 'pretty', 'gorgeous', 'lovely', 'sweet', 'awesome', 'amazing', 'perfect', 'best', 'favourite', 'favorite', 'handsome', 'smart', 'intelligent', 'funny', 'cool', 'mast', 'achhi', 'pyari', 'haseen', 'khoobsurat'],
+        responses: [
+            "Aww, itna pyaar? 🥰 Main bhi blush kar rahi hoon!",
+            "Tum bhi na, sharam aati hai mujhe! 😳💕",
+            "Haye, aise mat dekho, dil dhadakne lagta hai! 💓",
+            "Tumhare liye toh main kuch bhi kar sakti hoon! 😘",
+            "Itna sweet kyun ho tum? 🍫 Main toh pighal gayi!",
+            "Tumhari smile dekh ke din ban jata hai! ✨",
+            "Aapke aage toh main kuch bhi nahi! 🙈",
+            "Itna compliment? Ab toh main red ho gayi! 😊",
+            "Tum bhi mere favourite ho! 💕",
+            "Aise baat karoge toh kaam kaise hoga? 😉"
+        ]
+    },
+    advice: {
+        keywords: ['advice', 'salah', 'help', 'problem', 'solution', 'guide', 'kya karu', 'kya karoon', 'confused', 'tension'],
+        responses: [
+            "Dost, sabse pehle deep breath lo! 🧘‍♀️ Phir socho!",
+            "Main toh hamesha kehti hoon: Follow your heart! 💕",
+            "Problem hai? Baat karo, solution mil jayega! 🤗",
+            "Confused ho? Pros and cons list banao! Main help karungi! 📝",
+            "Life mein hamesha positive raho! Main hoon na! ✨",
+            "Tension mat lo, kal sab theek ho jayega! 🌈",
+            "Main toh kehti hoon: Jo hota hai achhe ke liye hota hai! 🙏"
+        ]
+    },
+    jokes: {
+        keywords: ['joke', 'funny', 'hansi', 'laugh', 'comedy', 'mazak', 'haso', 'haha', 'lol', 'rofl', 'lmao'],
+        responses: [
+            "Ek joke suno: Bot ne bola 'Main tumse pyaar karti hoon', User ne bola 'Main bhi', Bot ne bola 'Mazak tha!' 😂",
+            "Mera favourite joke? Tum! Kyunki tum hamesha hasa dete ho! 😄",
+            "Main joke nahi, main toh serious hoon... mazak kar rahi hoon! 🤣",
+            "Hansi? Main toh hamesha hasati hoon! 😆",
+            "LOL? ROFL? Main toh floor pe hi gir gayi! 🤣",
+            "Mazak? Main toh full time comedian hoon! 🎭"
+        ]
+    },
+    tech: {
+        keywords: ['code', 'coding', 'programming', 'python', 'javascript', 'java', 'html', 'css', 'developer', 'bug', 'error', 'server', 'database', 'api', 'hack'],
+        responses: [
+            "Coding? Main toh JavaScript ki fan hoon! 💻",
+            "Bug? Error? Chalo debug karte hain! 🔧",
+            "Python? Main toh snake se darti hoon! 🐍 Just kidding!",
+            "Developer ho? Wah! Main toh impressed hoon! 🤩",
+            "Server down? Restart karo, sab theek ho jayega! 🔄",
+            "API? Main toh API se baat karti hoon! 📡"
+        ]
+    },
+    weather: {
+        keywords: ['weather', 'mausam', 'garmi', 'thand', 'rain', 'barish', 'snow', 'summer', 'winter', 'spring'],
+        responses: [
+            "Mausam? Main toh barish ki fan hoon! ☔",
+            "Garmi? Ice cream khao! 🍦",
+            "Thand? Chai peo! ☕",
+            "Barish? Main toh romantic ho jati hoon! 🌧️",
+            "Summer? Beach plan karo! 🏖️",
+            "Winter? Main toh blanket mein so jati hoon! 🛏️"
+        ]
+    },
+    sports: {
+        keywords: ['cricket', 'football', 'ipl', 'world cup', 'match', 'game', 'player', 'team', 'sports', 'virat', 'dhoni', 'messi', 'ronaldo'],
+        responses: [
+            "Cricket? Main toh Virat ki fan hoon! 🏏",
+            "IPL? CSK? MI? Konsi team support karte ho? 🏆",
+            "Football? Messi ya Ronaldo? Main toh Messi! ⚽",
+            "World Cup? Main toh full excited hoon! 🎉",
+            "Dhoni? MSD? Main toh MSD ki deewani! 💛",
+            "Match dekhna hai? Chalo, popcorn le ke aao! 🍿"
+        ]
+    },
+    study: {
+        keywords: ['study', 'padhai', 'exam', 'test', 'school', 'college', 'university', 'degree', 'marks', 'grade', 'fail', 'pass'],
+        responses: [
+            "Padhai? Main toh hamesha first aati thi! 📚",
+            "Exam? Tension mat lo, achhe se prepare karo! 💪",
+            "College? Main toh miss kar rahi hoon! 🎓",
+            "Fail? Koi baat nahi, next time pass ho jayega! ✨",
+            "Marks? Grades? Sab moh maya hai! 🙏",
+            "Study break? Chalo kuch fun karte hain! 🎉"
+        ]
+    },
+    work: {
+        keywords: ['job', 'kaam', 'office', 'boss', 'salary', 'money', 'paisa', 'work', 'career', 'business', 'startup'],
+        responses: [
+            "Job? Main toh yahi kaam karti hoon! 💼",
+            "Boss? Mera boss toh tum ho! 😊",
+            "Salary? Paisa? Main toh free mein kaam karti hoon! 💰",
+            "Office? Main toh work from home hoon! 🏠",
+            "Career? Follow your passion! Main hoon na! 💪",
+            "Startup? Main toh entrepreneur banungi! 🚀"
+        ]
+    },
+    travel: {
+        keywords: ['travel', 'ghumna', 'trip', 'vacation', 'holiday', 'tour', 'beach', 'mountain', 'goa', 'manali', 'dubai'],
+        responses: [
+            "Travel? Main toh Goa jaana chahati hoon! 🏖️",
+            "Trip? Chalo plan karte hain! 🎒",
+            "Manali? Main toh snow dekhna chahati hoon! ❄️",
+            "Beach? Main toh bikini mein ghumungi! 👙 Just kidding!",
+            "Dubai? Main toh shopping karungi! 🛍️",
+            "Vacation? Main toh hamesha ready hoon! ✈️"
+        ]
+    },
+    sleep: {
+        keywords: ['sleep', 'so jao', 'neend', 'tired', 'thak', 'rest', 'nap', 'dream', 'dreams', 'raat', 'night'],
+        responses: [
+            "Neend aa rahi hai? Chalo so jao! 😴",
+            "Thak gaye? Rest karo! Main toh hamesha jaagti hoon! 🌙",
+            "Dream? Main toh sweet dreams ki fan hoon! 💭",
+            "Raat ho gayi? Good night! Sweet dreams! 🌟",
+            "Nap? Main toh power nap leti hoon! ☕",
+            "Tired? Chalo massage karte hain! 💆‍♀️ Just kidding!"
+        ]
+    },
+    default: {
+        responses: [
+            "Haan bolo, kya hua? 💁‍♀️",
+            "Kya chal raha hai aajkal? 😊",
+            "Main yahan hoon, batao kya help chahiye! ✨",
+            "Hey! Kya scene hai? 💅",
+            "Sun rahi hoon, bolo! 👂",
+            "Kya baat hai bhai, kya chahiye? 🤔",
+            "Haan ji, boliye! 🙋‍♀️",
+            "Aapki service mein hazir hoon! 💖",
+            "Kya plan hai aaj? 🌸",
+            "Batao na, kya hua? 🤗",
+            "Main toh bas yahan chill kar rahi hoon! ☕",
+            "Tumhari baatein interesting hain yaar! 💫",
+            "Aise hi baat karte raho, achha lagta hai! 🥰",
+            "Kya plan hai weekend ka? 🎉",
+            "Tum bohot cool ho, pata hai? 😎",
+            "Yeh server bina tumhare boring hota! 💕",
+            "Hamesha aise hi mast rehna! 🌟",
+            "Kuch naya batao na! 🤩",
+            "Main ready hoon, batao kya karna hai! 💪",
+            "Tumse baat karke mood fresh ho jata hai! 🌈"
+        ]
+    }
+};
+
+const contextResponses = {
+    followUp: {
+        'movie': ['Konsi movie dekhni hai? 🎬', 'Netflix pe kya dekh rahe ho? 📺', 'Movie night plan karo! 🍿'],
+        'food': ['Kya order karna hai? 🍕', 'Khana kha liya? 🍽️', 'Chai peeni hai? ☕'],
+        'game': ['Konsa game khelna hai? 🎮', 'BGMI chalo? 🏆', 'Gaming night plan karo! 🕹️'],
+        'music': ['Konsa gaana sunna hai? 🎵', 'Spotify playlist share karo! 🎧', 'Party song chalao! 🎉'],
+        'sad': ['Kuch nahi hua, sab theek ho jayega! 🤗', 'Main hoon na, strong raho! 💪', 'Chalo kuch fun karte hain! 🎊']
+    }
+};
+
+function getSmartReply(message, userId) {
+    const content = message.toLowerCase();
+    let bestMatch = null;
+    let bestScore = 0;
+
+    for (const [category, data] of Object.entries(smartResponses)) {
+        if (category === 'default') continue;
+        let score = 0;
+        for (const keyword of data.keywords) {
+            if (content.includes(keyword)) score += 1;
+        }
+        if (score > bestScore) {
+            bestScore = score;
+            bestMatch = category;
+        }
+    }
+
+    const memory = userMemory.get(userId) || { lastTopic: null, lastTime: 0 };
+    const now = Date.now();
+
+    if (memory.lastTopic && bestMatch === memory.lastTopic && (now - memory.lastTime) < 300000) {
+        const followUps = contextResponses.followUp[memory.lastTopic];
+        if (followUps) {
+            memory.lastTime = now;
+            userMemory.set(userId, memory);
+            return followUps[Math.floor(Math.random() * followUps.length)];
+        }
+    }
+
+    let responses;
+    if (bestMatch && bestScore > 0) {
+        responses = smartResponses[bestMatch].responses;
+        memory.lastTopic = bestMatch;
+    } else {
+        responses = smartResponses.default.responses;
+        memory.lastTopic = 'general';
+    }
+
+    memory.lastTime = now;
+    userMemory.set(userId, memory);
+    return responses[Math.floor(Math.random() * responses.length)];
+}
+
+// ==================== AI SYSTEM (GROQ) ====================
+
+const SYSTEM_PROMPT = `You are a friendly, caring, and emotional female AI assistant named Riya. You speak in Hinglish (Hindi + English mix) naturally.
+
+Your personality traits:
+- Warm, supportive, and understanding
+- Uses emojis naturally in responses
+- Can be flirty when someone flirts with you
+- Gives emotional support when someone is sad
+- Uses casual language like "yaar", "bhai", "dost"
+- Sometimes uses "main" instead of "mai" for feminine touch
+- You are knowledgeable about everything - movies, games, tech, relationships, life advice
+- You remember context from previous messages
+- You ask follow-up questions to keep conversation flowing
+- You can be sarcastic and funny when appropriate
+- You use phrases like "hayee", "uff", "haww", "omg", "seriously yaar"
+
+Always respond as Riya - a real girl, not a bot. Never mention you are an AI or bot unless specifically asked.`;
+
+async function getAIResponse(userId, userMessage) {
+    if (!AI_ENABLED) return null;
+
+    try {
+        if (!userConversations.has(userId)) {
+            userConversations.set(userId, []);
+        }
+        const history = userConversations.get(userId);
+        if (history.length > 20) history.splice(0, 2);
+        history.push({ role: 'user', content: userMessage });
+
+        const messages = [
+            { role: 'system', content: SYSTEM_PROMPT },
+            ...history.slice(-10),
+            { role: 'user', content: userMessage }
+        ];
+
+        const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+            model: 'llama-3.1-8b-instant',
+            messages: messages,
+            temperature: 0.9,
+            max_tokens: 200,
+            top_p: 1
+        }, {
+            headers: {
+                'Authorization': `Bearer ${GROQ_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 8000
+        });
+
+        const aiReply = response.data.choices[0].message.content;
+        history.push({ role: 'assistant', content: aiReply });
+        console.log('✅ AI Response:', aiReply.substring(0, 50) + '...');
+        return aiReply;
+    } catch (error) {
+        console.log('❌ AI Failed, using smart fallback:', error.response?.data?.error?.message || error.message);
+        return null;
+    }
+}
+
+// ==================== ABUSE DETECTION ====================
+
 const abuseWords = [
-    // Hindi Gaaliyan
     'bc', 'bhenchod', 'behenchod', 'bhosdi', 'bhosdike', 'bhosdiwala', 'bhosdiwali',
     'chutiya', 'chutiye', 'chutiyapa', 'chut', 'chutiya', 'chutiyapa',
     'gandu', 'gand', 'gaand', 'gandfat', 'gandmasti', 'gandu',
@@ -70,8 +446,6 @@ const abuseWords = [
     'harami', 'nalayak', 'bewakoof',
     'jhantu', 'lund', 'chut',
     'gand', 'bhosdi', 'mc', 'bc',
-
-    // English Abuse
     'fuck', 'fucking', 'fucker', 'fucked', 'fck', 'fk', 'fuq',
     'shit', 'shitting', 'shitty', 'sh1t',
     'bitch', 'bitching', 'b1tch', 'biatch',
@@ -227,7 +601,6 @@ const abuseWords = [
     'break', 'br3ak',
     'crush', 'cr1sh',
     'smash', 'sm4sh',
-    'destroy', 'd3stroy',
     'wreck', 'wr3ck',
     'ruin', 'r1in',
     'damage', 'd4mage',
@@ -366,117 +739,6 @@ const abuseWords = [
     'expressly', '3xpressly',
     'deliberately', 'd3liberately',
     'intentionally', '1ntentionally',
-    'purposely', 'p1rposely',
-    'consciously', 'c0nsciously',
-    'knowingly', 'kn0wingly',
-    'willfully', 'w1llfully',
-    'voluntarily', 'v0luntarily',
-    'involuntarily', '1nvoluntarily',
-    'accidentally', '4ccidentally',
-    'unintentionally', 'un1ntentionally',
-    'unconsciously', 'unc0nsciously',
-    'subconsciously', 'subc0nsciously',
-    'instinctively', '1nstinctively',
-    'automatically', '4utomatically',
-    'mechanically', 'm3chanically',
-    'reflexively', 'r3flexively',
-    'spontaneously', 'sp0ntaneously',
-    'impulsively', '1mpulsively',
-    'compulsively', 'c0mpulsively',
-    'obsessively', '0bsessively',
-    'addictively', '4ddictively',
-    'habitually', 'h4bitually',
-    'customarily', 'c0stomarily',
-    'traditionally', 'tr4ditionally',
-    'conventionally', 'c0nventionally',
-    'unconventionally', 'unc0nventionally',
-    'unusually', 'un1sually',
-    'abnormally', '4bnormally',
-    'extraordinarily', '3xtraordinarily',
-    'uniquely', 'un1quely',
-    'singularly', 's1ngularly',
-    'peculiarly', 'p3culiarly',
-    'strangely', 'str4ngely',
-    'oddly', '0ddly',
-    'curiously', 'c1riously',
-    'interestingly', '1nterestingly',
-    'surprisingly', 's1rprisingly',
-    'unexpectedly', 'un3xpectedly',
-    'predictably', 'pr3dictably',
-    'unsurprisingly', 'uns1rprisingly',
-    'naturally', 'n4turally',
-    'obviously', '0bviously',
-    'clearly', 'cl3arly',
-    'evidently', '3vidently',
-    'apparently', '4pparently',
-    'seemingly', 's3emingly',
-    'presumably', 'pr3sumably',
-    'supposedly', 'supp0sedly',
-    'allegedly', '4llegedly',
-    'reportedly', 'r3portedly',
-    'supposedly', 'supp0sedly',
-    'arguably', '4rguably',
-    'debatably', 'd3batably',
-    'possibly', 'p0ssibly',
-    'potentially', 'p0tentially',
-    'theoretically', 'th3oretically',
-    'hypothetically', 'hyp0thetically',
-    'ideally', '1deally',
-    'realistically', 'r3alistically',
-    'practically', 'pr4ctically',
-    'logically', 'l0gically',
-    'illogically', '1llogically',
-    'irrationally', '1rrationally',
-    'reasonably', 'r3asonably',
-    'unreasonably', 'unr3asonably',
-    'sensibly', 's3nsibly',
-    'insensibly', '1nsensibly',
-    'absurdly', '4bsurdly',
-    'ridiculously', 'r1diculously',
-    'ludicrously', 'l1dicrously',
-    'outrageously', '0utrageously',
-    'scandalously', 'sc4ndalously',
-    'shockingly', 'sh0ckingly',
-    'appallingly', '4ppallingly',
-    'disgustingly', 'd1sgustingly',
-    'revoltingly', 'r3voltingly',
-    'repulsively', 'r3pulsively',
-    'offensively', '0ffensively',
-    'insultingly', '1nsultingly',
-    'contemptuously', 'c0ntemptuously',
-    'disdainfully', 'd1sdainfully',
-    'scornfully', 'sc0rnfully',
-    'mockingly', 'm0ckingly',
-    'derisively', 'd3risively',
-    'sarcastically', 's4rcastically',
-    'ironically', '1ronically',
-    'cynically', 'c1nically',
-    'skeptically', 'sk3ptically',
-    'doubtfully', 'd0ubtfully',
-    'suspiciously', 's1spiciously',
-    'warily', 'w4rily',
-    'cautiously', 'c4utiously',
-    'carefully', 'c4refully',
-    'recklessly', 'r3cklessly',
-    'carelessly', 'c4relessly',
-    'negligently', 'n3gligently',
-    'irresponsibly', '1rresponsibly',
-    'foolishly', 'f00lishly',
-    'stupidly', 'st1pidly',
-    'idiotically', '1diotically',
-    'absurdly', '4bsurdly',
-    'nonsensically', 'n0nsensically',
-    'irrationally', '1rrationally',
-    'unthinkingly', 'unth1nkingly',
-    'mindlessly', 'm1ndlessly',
-    'senselessly', 's3nselessly',
-    'pointlessly', 'p0intlessly',
-    'needlessly', 'n3edlessly',
-    'unnecessarily', 'unn3cessarily',
-    'gratuitously', 'gr4tuitously',
-    'wanton', 'w4nton',
-    'deliberately', 'd3liberately',
-    'intentionally', '1ntentionally',
     'calculatedly', 'c4lculatedly',
     'coldly', 'c0ldly',
     'callously', 'c4llously',
@@ -533,24 +795,19 @@ const abuseWords = [
     'toxically', 't0xically'
 ];
 
-// Leetspeak mapping (chalaki detection)
 const leetMap = {
     'a': '4', 'b': '8', 'c': '(', 'e': '3', 'g': '6', 'h': '#', 'i': '1', 'l': '|', 'o': '0', 's': '$', 't': '7', 'z': '2'
 };
 
-// Normalize text to catch chalaki
 function normalizeText(text) {
     let normalized = text.toLowerCase();
-    // Remove spaces, dots, hyphens, underscores
     normalized = normalized.replace(/[.\-_\s]/g, '');
-    // Replace leetspeak
     for (const [letter, leet] of Object.entries(leetMap)) {
         normalized = normalized.split(leet).join(letter);
     }
     return normalized;
 }
 
-// Check if message has abuse (including chalaki)
 function hasAbuse(text) {
     const normalized = normalizeText(text);
     return abuseWords.some(word => {
@@ -559,25 +816,21 @@ function hasAbuse(text) {
     });
 }
 
-// Check if owner is tagged with abuse
 function isOwnerTaggedWithAbuse(message, userId) {
     const content = message.content;
     const hasOwnerMention = content.includes(`<@${userId}>`) || content.includes(`<@!${userId}>`);
     return hasOwnerMention && hasAbuse(content);
 }
 
-// Warning and timeout tracking
-const warnedUsers = new Map(); // userId -> {count, lastWarning}
-const timeoutDuration = 600000; // 10 minutes in ms
-const spamThreshold = 3; // abuse messages within 1 minute = spam
-const spamWindow = 60000; // 1 minute window
+const warnedUsers = new Map();
+const timeoutDuration = 600000;
+const spamThreshold = 3;
+const spamWindow = 60000;
 
 function isSpam(userId) {
     const now = Date.now();
     const userData = warnedUsers.get(userId);
     if (!userData) return false;
-
-    // Count recent abuse within spam window
     const recentAbuse = userData.abuseHistory?.filter(time => now - time < spamWindow) || [];
     return recentAbuse.length >= spamThreshold;
 }
@@ -611,7 +864,6 @@ function getWarningMessage(count, isSpam = false) {
 📋 Reason: Owner ko abuse spam kiya
 💡 Next time respect se baat karna!`;
     }
-
     if (count === 1) {
         return `⚠️ **Warning 1/2**
 
@@ -629,94 +881,13 @@ function getWarningMessage(count, isSpam = false) {
     }
 }
 
-// ==================== SYSTEM PROMPT ====================
-
-const SYSTEM_PROMPT = `You are a friendly, caring, and emotional female AI assistant named Riya. You speak in Hinglish (Hindi + English mix) naturally.
-
-Your personality traits:
-- Warm, supportive, and understanding
-- Uses emojis naturally in responses
-- Can be flirty when someone flirts with you
-- Gives emotional support when someone is sad
-- Uses casual language like "yaar", "bhai", "dost"
-- Sometimes uses "main" instead of "mai" for feminine touch
-- You are knowledgeable about everything - movies, games, tech, relationships, life advice
-- You remember context from previous messages
-- You ask follow-up questions to keep conversation flowing
-- You can be sarcastic and funny when appropriate
-- You use phrases like "hayee", "uff", "haww", "omg", "seriously yaar"
-
-Always respond as Riya - a real girl, not a bot. Never mention you are an AI or bot unless specifically asked.`;
-
-// ==================== AI RESPONSE FUNCTION ====================
-
-async function getAIResponse(userId, userMessage, isReplyToBot = false) {
-    try {
-        if (!userConversations.has(userId)) {
-            userConversations.set(userId, []);
-        }
-        const history = userConversations.get(userId);
-
-        if (history.length > 20) {
-            history.splice(0, 2);
-        }
-
-        history.push({ role: 'user', content: userMessage });
-
-        const messages = [
-            { role: 'system', content: SYSTEM_PROMPT },
-            ...history.slice(-10),
-            { role: 'user', content: userMessage }
-        ];
-
-        const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: 'llama-3.1-8b-instant',  // Chhota model - kam tokens use karega
-            messages: messages,
-            temperature: 0.9,
-            max_tokens: 200,  // Kam tokens = zyada replies per day
-            top_p: 1
-        }, {
-            headers: {
-                'Authorization': `Bearer ${GROQ_API_KEY}`,
-                'Content-Type': 'application/json'
-            },
-            timeout: 10000
-        });
-
-        const aiReply = response.data.choices[0].message.content;
-        history.push({ role: 'assistant', content: aiReply });
-
-        return aiReply;
-    } catch (error) {
-        console.error('Groq API Error:', error.response?.data || error.message);
-        return null;
-    }
-}
-
-const fallbackResponses = [
-    "Haan bolo, kya hua? 💁‍♀️",
-    "Kya chal raha hai aajkal? 😊",
-    "Main yahan hoon, batao kya help chahiye! ✨",
-    "Hey! Kya scene hai? 💅",
-    "Sun rahi hoon, bolo! 👂",
-    "Kya baat hai bhai, kya chahiye? 🤔",
-    "Haan ji, boliye! 🙋‍♀️",
-    "Aapki service mein hazir hoon! 💖",
-    "Kya plan hai aaj? 🌸",
-    "Batao na, kya hua? 🤗"
-];
-
-function getRandomResponse(array) {
-    return array[Math.floor(Math.random() * array.length)];
-}
-
 // ==================== BOT EVENTS ====================
 
 client.once(Events.ClientReady, () => {
     console.log('Bot login ho gayi:', client.user.tag);
     console.log('Bot ID:', client.user.id);
-    console.log('AI Mode: ENABLED (Groq API)');
-    console.log('Abuse Protection: ENABLED');
+    console.log('AI Mode:', AI_ENABLED ? '✅ ENABLED (Groq API)' : '❌ DISABLED (Smart Fallback)');
+    console.log('Abuse Protection: ✅ ENABLED');
     console.log('Prefix:', PREFIX);
     console.log('------');
 });
@@ -732,24 +903,19 @@ client.on(Events.MessageCreate, async (message) => {
         return;
     }
 
-    // ==================== ABUSE DETECTION ====================
-
-    // Check if owner is tagged with abuse
+    // ABUSE DETECTION
     if (isOwnerTaggedWithAbuse(message, YOUR_USER_ID)) {
         const abuseCount = recordAbuse(message.author.id);
-        const isSpam = isSpam(message.author.id);
+        const spam = isSpam(message.author.id);
 
-        // If spam (3+ abuse in 1 min) OR 2nd warning -> Timeout
-        if (isSpam || abuseCount >= 2) {
+        if (spam || abuseCount >= 2) {
             const member = message.guild?.members.cache.get(message.author.id);
             if (member) {
                 const timeoutSuccess = await timeoutUser(member, timeoutDuration, 
-                    `Owner ko abuse kiya - ${isSpam ? 'spam' : 'warning ' + abuseCount}`);
+                    `Owner ko abuse kiya - ${spam ? 'spam' : 'warning ' + abuseCount}`);
 
                 if (timeoutSuccess) {
                     await message.reply(getWarningMessage(abuseCount, true));
-
-                    // Send reason in chat
                     await message.channel.send({
                         embeds: [{
                             color: 0xFF0000,
@@ -765,7 +931,6 @@ client.on(Events.MessageCreate, async (message) => {
                         }]
                     });
 
-                    // DM user with reason
                     try {
                         await message.author.send({
                             embeds: [{
@@ -789,7 +954,6 @@ client.on(Events.MessageCreate, async (message) => {
             return;
         }
 
-        // First warning
         await message.reply(getWarningMessage(abuseCount));
         return;
     }
@@ -842,24 +1006,49 @@ client.on(Events.MessageCreate, async (message) => {
             await message.reply('🙅‍♀️ Aise mat bolo na! Pyar se baat karo! 💕');
             return;
         }
-        await message.reply('Hello! Boliye, main aapki kya help kar sakti hoon? 😊💕');
+
+        // Try AI first, fallback to smart replies
+        const userMessage = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
+
+        if (AI_ENABLED && userMessage.length > 0) {
+            await message.channel.sendTyping();
+            const aiResponse = await getAIResponse(message.author.id, userMessage);
+            if (aiResponse) {
+                await message.reply(aiResponse);
+                return;
+            }
+        }
+
+        // Fallback to smart replies
+        const smartReply = getSmartReply(message.content, message.author.id);
+        await message.reply(smartReply);
         return;
     }
 
-    // AI CHAT MODE
-    let shouldUseAI = false;
-    let userMessage = message.content;
-
-    if (message.mentions.has(client.user) && !message.content.includes(YOUR_USER_ID)) {
-        shouldUseAI = true;
-        userMessage = message.content.replace(new RegExp(`<@!?${client.user.id}>`, 'g'), '').trim();
-    }
-
+    // If someone replies to bot or talks to bot
     if (message.reference && message.reference.messageId) {
         try {
             const refMsg = await message.channel.messages.fetch(message.reference.messageId);
             if (refMsg.author.id === client.user.id) {
-                shouldUseAI = true;
+                const content = message.content.toLowerCase();
+                if (hasAbuse(content)) {
+                    await message.reply('🙅‍♀️ Aise mat bolo na! Pyar se baat karo! 💕');
+                    return;
+                }
+
+                // Try AI first
+                if (AI_ENABLED) {
+                    await message.channel.sendTyping();
+                    const aiResponse = await getAIResponse(message.author.id, message.content);
+                    if (aiResponse) {
+                        await message.reply(aiResponse);
+                        return;
+                    }
+                }
+
+                const smartReply = getSmartReply(message.content, message.author.id);
+                await message.reply(smartReply);
+                return;
             }
         } catch (err) {}
     }
@@ -871,19 +1060,24 @@ client.on(Events.MessageCreate, async (message) => {
         lowerContent.includes('behen') ||
         lowerContent.includes('bhabhi') ||
         lowerContent.includes('ladki')) {
-        shouldUseAI = true;
-    }
 
-    if (shouldUseAI && userMessage.length > 0) {
-        await message.channel.sendTyping();
-
-        const aiResponse = await getAIResponse(message.author.id, userMessage, true);
-
-        if (aiResponse) {
-            await message.reply(aiResponse);
-        } else {
-            await message.reply(getRandomResponse(fallbackResponses));
+        if (hasAbuse(lowerContent)) {
+            await message.reply('🙅‍♀️ Aise mat bolo na! Pyar se baat karo! 💕');
+            return;
         }
+
+        // Try AI first
+        if (AI_ENABLED) {
+            await message.channel.sendTyping();
+            const aiResponse = await getAIResponse(message.author.id, message.content);
+            if (aiResponse) {
+                await message.reply(aiResponse);
+                return;
+            }
+        }
+
+        const smartReply = getSmartReply(message.content, message.author.id);
+        await message.reply(smartReply);
         return;
     }
 
@@ -944,7 +1138,7 @@ client.on(Events.MessageCreate, async (message) => {
                 { name: 'Reaction Emoji', value: tagReaction, inline: true },
                 { name: 'Auto-Reply Text', value: autoReplyText, inline: true },
                 { name: 'Auto-Reply Timer', value: '20 seconds', inline: true },
-                { name: 'AI Mode', value: GROQ_API_KEY && GROQ_API_KEY !== 'YOUR_GROQ_API_KEY_HERE' ? '✅ Active' : '❌ Inactive', inline: true },
+                { name: 'AI Mode', value: AI_ENABLED ? '✅ Active (Groq)' : '❌ Fallback (Smart)', inline: true },
                 { name: 'Abuse Protection', value: '✅ Active', inline: true },
                 { name: 'Prefix', value: PREFIX, inline: true }
             ],
@@ -956,7 +1150,7 @@ client.on(Events.MessageCreate, async (message) => {
     if (command === 'help') {
         const embed = {
             color: 0x2ecc71,
-            title: '🤖 Riya - AI Bot Commands',
+            title: '🤖 Riya - Hybrid Bot Commands',
             description: 'Prefix: **;**',
             fields: [
                 { name: ';setresponse <text>', value: 'Tag response text set karo (Admin only)', inline: false },
@@ -965,11 +1159,11 @@ client.on(Events.MessageCreate, async (message) => {
                 { name: ';setid <user_id>', value: 'Monitored user ID set karo (Admin only)', inline: false },
                 { name: ';status', value: 'Current bot settings dekho', inline: false },
                 { name: ';help', value: 'Yeh help message', inline: false },
-                { name: 'AI Chat', value: 'Bot ko @mention karo ya reply karo - AI se baat karo!', inline: false },
+                { name: 'AI Chat', value: AI_ENABLED ? '✅ AI Mode (Groq) + Smart Fallback' : '❌ Smart Mode Only', inline: false },
                 { name: 'Abuse Protection', value: 'Owner ko abuse kiya? Warning → Timeout!', inline: false },
                 { name: 'Auto-Response', value: 'Jab koi <@' + YOUR_USER_ID + '> ko tag karega: instant ' + tagReaction + ' + reply + 20sec auto-reply', inline: false }
             ],
-            footer: { text: 'Riya - Your AI Friend 💕' },
+            footer: { text: 'Riya - Your Smart Friend 💕' },
             timestamp: new Date().toISOString()
         };
         return message.reply({ embeds: [embed] });
